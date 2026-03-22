@@ -3,6 +3,16 @@ const sidebars = {
   docs: [
     'intro',
     'getting-started',
+    'team-knowledge-hub',
+    {
+      type: 'category',
+      label: 'Connecting Your Tools',
+      items: [
+        'agents/proxy-mode',
+        'agents/mcp-server',
+        'agents/read-only-mode',
+      ],
+    },
     {
       type: 'category',
       label: 'How It Works',
@@ -13,16 +23,6 @@ const sidebars = {
         'how-it-works/hybrid-search',
       ],
     },
-    {
-      type: 'category',
-      label: 'Agent Integration',
-      items: [
-        'agents/mcp-server',
-        'agents/proxy-mode',
-        'agents/read-only-mode',
-      ],
-    },
-    'team-knowledge-hub',
     'configuration',
   ],
 };

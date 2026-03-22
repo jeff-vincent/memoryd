@@ -5,69 +5,52 @@ title: Hybrid Search
 
 # Hybrid Search
 
-When connected to a MongoDB Atlas cluster, memoryd upgrades from plain vector search to a hybrid pipeline that combines semantic similarity, keyword matching, and diversity optimization.
-
-## Two modes, one interface
-
-memoryd detects at runtime whether the store supports the `HybridSearcher` interface:
-
-| Mode | Store | Search strategy |
-|---|---|---|
-| **Local** | MongoDB standalone / Atlas Local | Vector search only (cosine similarity) |
-| **Atlas** | MongoDB Atlas cluster | Hybrid: vector + text + RRF + MMR |
-
-No configuration change required. Connect to Atlas, get hybrid search automatically.
-
-## The hybrid pipeline
-
-```
-Query → [Vector Search] + [Text Search] → RRF Fusion → MMR Diversification → Top-K
-```
-
-### Step 1: Vector search (semantic)
-
-The query embedding is compared against stored memory embeddings using Atlas Vector Search:
-
-- Index: `vector_index` on the `embedding` field
-- Candidates: `topK × 20` (oversamples, then trims)
-- Pre-filter: `quality_score ≥ 0.05 OR quality_score == 0` (keeps new + quality memories, drops garbage)
-- Optional source filter via regex
-
-### Step 2: Text search (lexical)
-
-A parallel Lucene full-text search runs against the `content` field using the `text_index`. This catches exact keyword matches that embedding similarity might miss — acronyms, error codes, specific class names.
-
-### Step 3: Reciprocal Rank Fusion (RRF)
-
-The two result lists are fused using RRF with smoothing constant $k = 60$:
-
-$$
-\text{score}(d) = \sum_{L \in \{vector, text\}} \frac{1}{\text{rank}_L(d) + k + 1}
-$$
-
-A memory ranked #1 in vector search and #3 in text search gets a combined score of $\frac{1}{62} + \frac{1}{64}$. RRF is rank-based, not score-based, so it's robust to the different score scales of vector similarity and Lucene relevance.
-
-### Step 4: Maximal Marginal Relevance (MMR)
-
-The fused results are re-ranked to maximize diversity while preserving relevance:
-
-$$
-\text{MMR}(d) = \lambda \cdot \text{relevance}(d) - (1 - \lambda) \cdot \max_{d_j \in S} \text{sim}(d, d_j)
-$$
-
-Where:
-- $\lambda = 0.7$ (default) — 70% weight on relevance, 30% on diversity
-- $S$ = already-selected results
-- $\text{sim}$ = cosine similarity between embeddings
-
-MMR greedily selects the next result that is both relevant to the query and different from what's already been selected. This prevents the top-K from being five slight variations of the same memory.
+When connected to a MongoDB Atlas cluster (the recommended setup for teams), memoryd uses a multi-stage search pipeline that combines two complementary approaches to find the most relevant knowledge.
 
 ## Why hybrid?
 
-Pure vector search is good at "what is this about?" but weak on exact matches. If a developer asks about `ERR_CONN_REFUSED`, vector search finds memories about connection errors in general — but text search finds the one that mentions that exact error code.
+Consider a developer asking about `ERR_CONN_REFUSED`. A meaning-based search finds knowledge about connection errors in general — useful, but not specific. A keyword-based search finds the exact item that mentions that precise error code. Hybrid search combines both signals to deliver the best of each.
 
-RRF lets both signals contribute without requiring calibration. MMR then ensures the final results cover different aspects of the query instead of clustering around a single concept.
+This matters for teams: the shared knowledge store contains a mix of high-level architectural context and specific technical details. Hybrid search surfaces both.
 
-## Fetch factor
+## Two search modes
 
-Both search phases use a fetch factor of `max(topK × 4, 20)` candidates. This ensures enough diversity in the candidate pool for MMR to work with, even for small top-K values.
+memoryd automatically selects the best search strategy based on your database:
+
+| Setup | Strategy | Best for |
+|---|---|---|
+| **Atlas cluster** (`atlas_mode: true`) | Hybrid search | Teams — more accurate, diverse results |
+| **Local MongoDB** | Vector search only | Solo development — simpler, still effective |
+
+No configuration change needed beyond `atlas_mode`. The upgrade happens automatically when you connect to Atlas.
+
+## How hybrid search works
+
+The pipeline runs in four stages:
+
+### 1. Meaning-based search (semantic)
+
+The question is converted to a mathematical representation and compared against all stored knowledge by conceptual similarity. This finds items that are *about the same thing*, even if they use completely different words.
+
+Quality filtering is applied at this stage — low-scoring knowledge items are excluded from results.
+
+### 2. Keyword-based search (lexical)
+
+A parallel text search looks for exact keyword matches — acronyms, error codes, class names, specific terms. This catches items that semantic search might rank lower because the wording is different but the exact match is valuable.
+
+### 3. Rank fusion
+
+The two result lists are combined using Reciprocal Rank Fusion (RRF), which merges rankings from different sources without needing to calibrate their scoring scales. An item ranked highly by both searches scores highest; an item found by only one search still appears.
+
+### 4. Diversity optimization
+
+The fused results are re-ranked to maximize diversity. Without this step, the top results might be five slight variations of the same knowledge. The diversity pass (Maximal Marginal Relevance) ensures results cover *different aspects* of the question — giving the AI tool a broader, more useful set of context.
+
+## What this means for teams
+
+For a team of 10+ contributors, the shared knowledge store grows quickly. Hybrid search ensures that:
+
+- **Specific technical details** (error codes, config values, API endpoints) are found even when the question is phrased broadly
+- **Conceptual knowledge** (architecture decisions, design rationale) is found even when the question uses different terminology
+- **Results are diverse** — the AI tool gets context from multiple angles, not five versions of the same thing
+- **Low-quality noise is filtered out** — knowledge that was captured but never proved useful doesn't clutter results

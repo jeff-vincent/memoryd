@@ -6,57 +6,64 @@ title: What is memoryd?
 
 # memoryd
 
-**Persistent memory for coding agents — institutional knowledge that builds itself.**
+**A shared knowledge layer for engineering teams — built automatically from the work you're already doing.**
 
-Every coding agent session starts cold. The agent has no memory of decisions made yesterday, dead ends explored last week, or conventions your team agreed on a month ago. You compensate by re-explaining context, which is tedious and incomplete.
+Every AI coding session starts cold. The agent doesn't remember the architecture decisions from last sprint, the deployment procedure your team refined over months, or the workaround for that edge case someone debugged last Tuesday. Teams compensate by re-explaining context, maintaining wikis no one updates, and hoping institutional knowledge doesn't walk out the door.
 
-memoryd fixes this. It's a local daemon that sits between your coding agents and the LLM provider, transparently building a persistent knowledge store from every interaction. Over time, it becomes an institutional memory — of architectural decisions, debugging insights, team patterns, and project-specific context — that every agent session can draw from automatically.
+memoryd changes this. It's a lightweight service that sits alongside your team's AI coding tools, transparently capturing knowledge from every session and making it available to everyone. Over time, your team builds an always-current knowledge base — without anyone stopping to write documentation.
 
 ```
-Developer → Coding Agent → memoryd → LLM Provider
-                              ↕
-                     MongoDB Atlas (shared)
+Your Team's Agents → memoryd → LLM Provider
+                        ↕
+               MongoDB Atlas (shared)
 ```
 
-## Two ways to connect
+## How it fits into your team
 
-memoryd exposes two interfaces. Use one or both:
+Every team member runs memoryd locally. All instances connect to a **shared MongoDB Atlas cluster** — the same database your org already knows how to manage. When one engineer debugs an infrastructure issue, the resolution is available to everyone's AI tools. Architecture decisions, API patterns, onboarding context — it all accumulates organically from daily work.
 
-| Interface | How it works | Who populates the store |
-|-----------|-------------|------------------------|
-| **Proxy mode** | Transparent HTTP proxy — agents don't know it's there. Set `ANTHROPIC_BASE_URL=http://127.0.0.1:7432` and work normally. | Automatic. Every response is chunked, embedded, and stored. |
-| **MCP server** | [Model Context Protocol](https://modelcontextprotocol.io/) over stdio. Any MCP-compatible agent can search, store, and manage memories via tool calls. | The agent decides — store explicitly, or just search. |
+**No one writes documentation. No one maintains a wiki. Knowledge builds itself.**
 
-The proxy populates the store automatically from Claude Code sessions. The MCP server makes that store accessible to **any** agentic tool — Claude Code, Cursor, Windsurf, Cline, custom agents, whatever speaks MCP. An agent doesn't need to write anything to benefit from reading what's already there.
+| Role | How they benefit |
+|------|-----------------|
+| **Engineers** | Their AI tools have context from past sessions — theirs and their teammates'. Less re-explaining, fewer repeated mistakes. |
+| **Engineering Managers** | Institutional knowledge is retained even through team turnover. Onboarding accelerates as new hires inherit the team's accumulated context. |
+| **PMs & TPMs** | Cross-team knowledge flows naturally. One team's learnings surface for others working in adjacent areas. |
+| **Platform / DevOps** | Operational knowledge — deployment procedures, incident resolutions, infrastructure quirks — persists and spreads across the org. |
 
-## Why this matters for teams
+→ [Team Knowledge Hub](team-knowledge-hub) explores the team vision in depth, including how knowledge can be scoped to teams and business units.
 
-When your team connects to a **shared MongoDB Atlas cluster**, every developer's agent sessions feed the same knowledge store. One person debugs a gnarly infrastructure issue — next week, another developer's agent already knows the resolution. Architectural decisions, API patterns, deployment gotchas — they accumulate organically just from people doing their work.
+## Works with any AI coding tool
 
-No one writes documentation. No one maintains a wiki. The knowledge web builds itself.
+memoryd is **tool-agnostic**. It connects to your team's tools through two interfaces:
 
-→ [Team Knowledge Hub](team-knowledge-hub) explores this in depth.
+| Interface | Best for | How it works |
+|-----------|----------|-------------|
+| **[Proxy mode](agents/proxy-mode)** | Claude Code, any Anthropic-based tool | Transparent — set one environment variable, work normally. Knowledge captured automatically. |
+| **[MCP server](agents/mcp-server)** | Cursor, Windsurf, Cline, custom tools | Standard protocol — agent searches and stores knowledge via tool calls. |
 
-## What happens under the hood
+Teams don't need to standardize on one tool. Alice uses Claude Code, Bob uses Cursor, Carol has a custom pipeline — they all feed and draw from the same knowledge store. There's also a **[read-only mode](agents/read-only-mode)** for teams or tools that should consume knowledge without contributing.
 
-The system is simple on the surface but precise underneath:
+## What memoryd handles automatically
 
-1. **[Read path](how-it-works/read-path)** — Every prompt is embedded and searched against the store. Relevant memories are injected into the system prompt. The agent sees prior context without anyone asking for it.
+You don't need to understand the internals to use it, but here's what's happening under the hood:
 
-2. **[Write path](how-it-works/write-path)** — Every response is chunked at paragraph boundaries, scrubbed of secrets, batch-embedded, deduplicated, and stored asynchronously. Zero latency added.
+1. **[Knowledge capture](how-it-works/write-path)** — Every AI interaction is automatically broken into meaningful pieces, scrubbed of secrets (API keys, tokens, passwords), deduplicated against what's already known, and stored.
 
-3. **[Quality loop](how-it-works/quality-loop)** — A background steward scores memories by usage and recency, prunes noise, and merges near-duplicates. The store self-maintains.
+2. **[Context retrieval](how-it-works/read-path)** — When someone starts a new AI session, relevant knowledge from the shared store is automatically surfaced. The agent sees prior context without anyone asking for it.
 
-4. **[Hybrid search](how-it-works/hybrid-search)** — On Atlas proper, retrieval combines vector similarity, full-text keyword matching, and diversity re-ranking. On local dev, plain vector search.
+3. **[Quality maintenance](how-it-works/quality-loop)** — A background process continuously scores knowledge by how useful it's been, removes noise, and merges near-duplicates. The store stays clean without manual curation.
 
-## Quick start
+4. **[Intelligent search](how-it-works/hybrid-search)** — On Atlas, retrieval combines meaning-based and keyword-based search with diversity optimization. It finds both semantically related and exact-match results.
 
-```bash
-brew install memoryd         # or: go install github.com/kindling-sh/memoryd/cmd/memoryd@latest
-memoryd start                # connects to MongoDB, starts embedding model
-export ANTHROPIC_BASE_URL=http://127.0.0.1:7432
-```
+## Getting started
 
-That's it. Launch your coding agent and work normally. Memory builds in the background.
+A team lead or platform engineer typically handles the one-time setup:
+
+1. **Provision** a MongoDB Atlas cluster (free tier works for evaluation)
+2. **Install** memoryd on each team member's machine
+3. **Configure** everyone to point at the shared cluster
+
+That's it. Team members work normally with their preferred AI tools, and the knowledge base builds in the background.
 
 → [Getting Started](getting-started) has the full setup guide.

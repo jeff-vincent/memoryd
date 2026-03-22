@@ -5,17 +5,17 @@ title: MCP Server
 
 # MCP Server
 
-memoryd exposes its full memory interface over the **Model Context Protocol (MCP)** — a standard JSON-RPC protocol that any compatible agent can speak. This is the primary integration point for agents beyond the proxy.
+The MCP (Model Context Protocol) server is how memoryd connects to **any AI coding tool** — Cursor, Windsurf, Cline, Claude Code, custom pipelines, or anything that speaks MCP. It's the universal integration point.
 
-## The key idea
+## Why MCP matters for teams
 
-The MCP server makes memoryd's knowledge store accessible to **any agentic tool** that supports MCP. The store is the product, not the agent that populates it.
+Different team members use different tools. That's fine. MCP is a standard protocol that lets any compatible tool search and store knowledge in the same shared database. The tool doesn't matter — the knowledge store is the product.
 
-Today, the proxy captures knowledge from Claude Code sessions. But any MCP-connected agent — Cursor, Windsurf, a custom LangChain pipeline, an internal tool — can read from (and write to) the same store. The knowledge accumulates from all sources and benefits all consumers.
+Alice uses Claude Code (via proxy), Bob uses Cursor (via MCP), Carol has a custom pipeline (via MCP). They all contribute to and benefit from the same team knowledge.
 
 ## Setup
 
-Add memoryd as an MCP server in your agent's configuration:
+Add memoryd to your tool's MCP configuration:
 
 ```json
 {
@@ -28,52 +28,64 @@ Add memoryd as an MCP server in your agent's configuration:
 }
 ```
 
-memoryd communicates over **stdio** (line-delimited JSON-RPC), implementing MCP protocol version `2024-11-05`.
+This works with Claude Code, Cursor, Windsurf, Cline, and any tool that supports MCP servers. The memoryd daemon must be running (`memoryd start`) for MCP tools to work.
 
-## Tools
+## Available tools
 
-The MCP server exposes 8 tools:
+The MCP server gives AI tools access to 8 capabilities:
 
-### Memory operations
+### Core knowledge operations
 
-| Tool | Parameters | Description |
-|---|---|---|
-| `memory_search` | `query` (required) | Semantic search across all memories. Returns formatted context. |
-| `memory_store` | `content` (required), `source` (default: "mcp") | Store new knowledge. Auto-deduplicates, filters noise, redacts secrets. |
-| `memory_list` | `query` (optional), `limit` (default: 20) | List memories, optionally filtered by text match. |
-| `memory_delete` | `id` (required) | Delete a specific memory by ID. |
+| Tool | What it does |
+|---|---|
+| `memory_search` | Search the shared knowledge base with a natural language query |
+| `memory_store` | Store new knowledge (auto-deduplicated, noise-filtered, secrets scrubbed) |
+| `memory_list` | Browse stored knowledge, optionally filtered by text |
+| `memory_delete` | Remove a specific knowledge item |
 
 ### Source ingestion
 
-| Tool | Parameters | Description |
-|---|---|---|
-| `source_ingest` | `url`, `name` (required), `max_depth` (default: 3), `max_pages` (default: 500) | Crawl a URL and ingest content into the memory store. |
-| `source_list` | — | List all ingested sources and their status. |
-| `source_remove` | `id` (required) | Remove a source and all its associated memories. |
+| Tool | What it does |
+|---|---|
+| `source_ingest` | Crawl a URL (wiki, docs site) and add its content to the knowledge base |
+| `source_list` | List all ingested sources and their status |
+| `source_remove` | Remove a source and all its associated knowledge |
 
-### Quality
+### Quality monitoring
 
-| Tool | Parameters | Description |
-|---|---|---|
-| `quality_stats` | — | Returns retrieval event count and learning status. |
+| Tool | What it does |
+|---|---|
+| `quality_stats` | Check the knowledge base health — retrieval counts, learning status |
 
-## How it works
+## How it fits together
 
 ```
-Agent  ←→  stdin/stdout (JSON-RPC)  ←→  memoryd mcp  ←→  REST API  ←→  Memory Store
+Any AI tool ←→ MCP (stdin/stdout) ←→ memoryd ←→ Shared Atlas store
 ```
 
-The MCP server is a thin adapter. It translates MCP tool calls into REST API requests against the running memoryd daemon (`http://127.0.0.1:{port}`). This means:
+MCP writes go through the same [knowledge capture pipeline](../how-it-works/write-path) as proxy writes — noise filtering, secret scrubbing, deduplication. MCP reads use the same [retrieval pipeline](../how-it-works/read-path) — hybrid search, quality filtering, diversity optimization.
 
-- The daemon must be running (`memoryd start`) for MCP tools to work
-- MCP writes go through the same pipeline as proxy writes — noise filtering, redaction, dedup
-- MCP reads use the same retrieval pipeline — hybrid search when available, quality filtering included
+The integration method doesn't matter. The knowledge quality is the same regardless of how it enters the store.
 
 ## Read-only usage
 
-An agent can connect via MCP and **only use `memory_search`** — consuming institutional knowledge without writing anything. This is the read-only mode described in [Read-Only Mode](read-only-mode).
+Any tool can connect via MCP and **only use `memory_search`** — consuming team knowledge without contributing. This is useful for:
 
-This is particularly useful when:
-- An agent should benefit from team knowledge but not contribute to it
-- You want to try memoryd without committing to full integration
-- Security policies restrict what an agent can store
+- Tools that should read but not write (evaluation, auditing)
+- Team members in security-sensitive contexts
+- Trial periods before committing to full integration
+
+See [Read-Only Mode](read-only-mode) for more on this pattern.
+
+## For teams using multiple tools
+
+A common team setup:
+
+| Team member | Tool | Connection | Contribution |
+|---|---|---|---|
+| Alice | Claude Code | Proxy | Automatic — every session captured |
+| Bob | Cursor | MCP | Agent decides what to search and store |
+| Carol | Custom pipeline | MCP (read-only) | Reads team knowledge, doesn't write |
+| Dave | Claude Code + Cursor | Proxy + MCP | Both automatic capture and explicit tools |
+
+All four draw from and contribute to the same knowledge pool.

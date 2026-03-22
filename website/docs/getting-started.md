@@ -5,35 +5,29 @@ title: Getting Started
 
 # Getting Started
 
-## Prerequisites
+This guide walks through setting up memoryd for your team. The typical flow: one person (a team lead or platform engineer) provisions the shared database, then each team member installs memoryd and connects.
 
-- **Go 1.26+** — [go.dev/dl](https://go.dev/dl/)
-- **llama.cpp** — `brew install llama.cpp` (provides the local embedding server)
-- **MongoDB** — either:
-  - [MongoDB Atlas](https://www.mongodb.com/atlas) (free tier works, recommended for teams)
-  - Atlas Local via Docker (for solo development)
+## What you'll need
 
-## Install
+- **MongoDB Atlas** — a shared cluster your team connects to ([free tier](https://www.mongodb.com/atlas) works for evaluation)
+- **Each team member's machine needs:**
+  - memoryd installed (macOS or Linux)
+  - An AI coding tool (Claude Code, Cursor, Windsurf, etc.)
 
-**Homebrew:**
-```bash
-brew install memoryd
-```
+## Step 1: Set up the shared database
 
-**From source:**
-```bash
-git clone https://github.com/kindling-sh/memoryd.git
-cd memoryd
-make build    # → bin/memoryd
-```
+This is a one-time task, typically done by whoever manages your team's infrastructure.
 
-## Set up MongoDB
+### Create an Atlas cluster
 
-### Option A: Atlas (recommended)
+1. Sign up or log in at [cloud.mongodb.com](https://cloud.mongodb.com)
+2. Create a cluster (free tier M0 is fine for getting started)
+3. Create a database called `memoryd` with a collection called `memories`
+4. Set up database access (username/password) and network access for your team
 
-1. Create a free-tier cluster at [cloud.mongodb.com](https://cloud.mongodb.com)
-2. Create database `memoryd` with collection `memories`
-3. Create a vector search index:
+### Create the search index
+
+In the Atlas UI, go to **Atlas Search** and create a vector search index on the `memories` collection:
 
 ```json
 {
@@ -50,55 +44,61 @@ make build    # → bin/memoryd
 }
 ```
 
-4. Copy your connection string
+### Share the connection string
 
-### Option B: Atlas Local (Docker, solo dev)
+Copy the connection string from your cluster's "Connect" dialog. It looks like:
 
-```bash
-docker run -d --name memoryd-mongo -p 27017:27017 mongodb/mongodb-atlas-local:8.0
-
-docker cp scripts/create_index.js memoryd-mongo:/tmp/create_index.js
-docker exec memoryd-mongo mongosh memoryd --quiet --file /tmp/create_index.js
+```
+mongodb+srv://team-user:password@cluster0.mongodb.net/?retryWrites=true
 ```
 
-Connection string: `mongodb://localhost:27017/?directConnection=true`
+Distribute this to your team via your org's secrets management (1Password, Vault, etc.). Each team member will add it to their local config.
 
-## Configure
+## Step 2: Install memoryd (each team member)
 
+**One-line install (macOS):**
 ```bash
-memoryd start    # creates ~/.memoryd/config.yaml on first run, then exits if URI is empty
+curl -fsSL https://raw.githubusercontent.com/jeff-vincent/memoryd/main/install.sh | bash
 ```
 
-Edit `~/.memoryd/config.yaml`:
+This installs the memoryd binary, downloads the local embedding model (~70MB), and creates a default config file.
+
+**From source:**
+```bash
+git clone https://github.com/jeff-vincent/memoryd.git
+cd memoryd
+make build    # → bin/memoryd
+```
+
+## Step 3: Configure (each team member)
+
+On first run, memoryd creates a config file at `~/.memoryd/config.yaml`. The only required change is adding the shared connection string:
 
 ```yaml
-mongodb_atlas_uri: "mongodb+srv://user:pass@cluster0.mongodb.net/?retryWrites=true"
+mongodb_atlas_uri: "mongodb+srv://team-user:password@cluster0.mongodb.net/?retryWrites=true"
+atlas_mode: true
 ```
 
-That's the only required field. Everything else has sensible defaults.
+Setting `atlas_mode: true` enables the full feature set — hybrid search, quality filtering, and cross-team deduplication. See [Configuration](configuration) for all options.
 
-## Run
+## Step 4: Start memoryd and connect your tools
 
 ```bash
-# Start the daemon
 memoryd start
+```
 
-# Point your coding agent at memoryd
+The embedding model downloads automatically on first launch. Then connect your AI tools:
+
+**Claude Code (proxy mode — fully automatic):**
+```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:7432
 ```
 
-The embedding model (~70MB) downloads automatically on first launch. After startup, work normally with Claude Code or any Anthropic-compatible agent. Memory accumulates in the background.
+Now every Claude Code session automatically captures and retrieves knowledge from the shared store. No other changes needed.
 
-## Verify it's working
+**Cursor, Windsurf, or other MCP-compatible tools:**
 
-```bash
-memoryd status        # pings the health endpoint
-memoryd search "test" # search stored memories
-```
-
-## MCP integration (optional)
-
-To use memoryd as an MCP server with any compatible agent, add to your MCP config:
+Add memoryd as an MCP server in your tool's config:
 
 ```json
 {
@@ -111,4 +111,42 @@ To use memoryd as an MCP server with any compatible agent, add to your MCP confi
 }
 ```
 
-This gives the agent access to `memory_search`, `memory_store`, `source_ingest`, and other tools — without the proxy. See [MCP Server](agents/mcp-server) for details.
+See [Connecting Your Tools](agents/mcp-server) for detailed setup per tool.
+
+## Step 5: Verify it's working
+
+```bash
+memoryd status        # confirms the daemon is running
+memoryd search "test" # searches the shared knowledge store
+```
+
+Visit the built-in dashboard at `http://localhost:7432` to see memories accumulating, quality stats, and knowledge sources.
+
+## What happens next
+
+From this point on, your team works normally. As people use their AI tools:
+
+- **Knowledge accumulates** — debugging sessions, architecture discussions, deployment procedures all get captured
+- **Quality improves** — the steward automatically removes noise, merges duplicates, and surfaces the most valuable knowledge
+- **Everyone benefits** — one person's debugging insight becomes available to the entire team
+
+### Seeding team knowledge (optional)
+
+Teams can accelerate the process by ingesting existing documentation:
+
+```bash
+memoryd ingest "team-wiki" https://wiki.yourcompany.com/engineering
+```
+
+This crawls the URL and adds the content to the shared store, where it lives alongside organically captured knowledge. See [Team Knowledge Hub](team-knowledge-hub) for more on seeding and curating team knowledge.
+
+## Evaluating for your team
+
+Want to try it before rolling out? Start with a small group:
+
+1. Set up the shared Atlas cluster
+2. Have 3-5 engineers install and use memoryd for a sprint
+3. Check the dashboard and `memoryd search` to see what knowledge has accumulated
+4. Run `quality_stats` to see retrieval patterns
+
+The value becomes obvious quickly — especially after the first time someone's AI tool surfaces context from a teammate's earlier session.

@@ -5,11 +5,11 @@ import rehypeKatex from 'rehype-katex';
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'memoryd',
-  tagline: 'Persistent memory for coding agents — institutional knowledge that builds itself',
+  tagline: 'Shared knowledge for engineering teams — built automatically from the work you already do',
   favicon: 'img/favicon.ico',
-  url: 'https://kindling-sh.github.io',
+  url: 'https://jeff-vincent.github.io',
   baseUrl: '/memoryd/',
-  organizationName: 'kindling-sh',
+  organizationName: 'jeff-vincent',
   projectName: 'memoryd',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
@@ -31,7 +31,7 @@ const config = {
         docs: {
           routeBasePath: '/',
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/kindling-sh/memoryd/tree/main/website/',
+          editUrl: 'https://github.com/jeff-vincent/memoryd/tree/main/website/',
           remarkPlugins: [remarkMath],
           rehypePlugins: [rehypeKatex],
         },
@@ -54,12 +54,12 @@ const config = {
         title: 'memoryd',
         items: [
           { type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs' },
-          { href: 'https://github.com/kindling-sh/memoryd', label: 'GitHub', position: 'right' },
+          { href: 'https://github.com/jeff-vincent/memoryd', label: 'GitHub', position: 'right' },
         ],
       },
       footer: {
         style: 'dark',
-        copyright: `Copyright © ${new Date().getFullYear()} Kindling.`,
+        copyright: `Copyright © ${new Date().getFullYear()} memoryd.`,
       },
     }),
 };

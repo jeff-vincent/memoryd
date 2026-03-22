@@ -1,92 +1,71 @@
 ---
 sidebar_position: 2
-title: The Write Path
+title: How Knowledge is Captured
 ---
 
-# The Write Path
+# How Knowledge is Captured
 
-Every response from the upstream model is captured and processed into memory — asynchronously, with zero impact on response latency.
+Every AI interaction across your team is automatically processed into reusable knowledge — with zero impact on response speed.
 
-## Flow
+## The flow
 
 ```
-Response text → Chunk → Filter noise → Redact secrets → Batch embed → Dedup → Store
+AI response → Break into pieces → Filter noise → Scrub secrets → Deduplicate → Store
 ```
 
-### 1. Chunk
+### 1. Break into meaningful pieces
 
-Raw text is split into memory-sized pieces using a paragraph-aware chunker:
-
-- Split on double newlines (paragraph boundaries)
-- If a paragraph exceeds **512 tokens** (~2048 chars), split further on sentence boundaries (`. `)
-- Accumulate into chunks up to the token budget, then flush
-
-This preserves logical boundaries. A function definition stays together. A list of steps stays together. Only oversized blocks get split.
+Raw conversation text is split into knowledge-sized chunks at natural boundaries — paragraph breaks, logical sections. A function explanation stays together. A list of deployment steps stays together. Only oversized blocks get split further.
 
 ### 2. Filter noise
 
-Each chunk passes through a noise gate:
+Not everything in a conversation is worth keeping. memoryd automatically filters:
 
-- **Too short** — under 20 characters → skip
-- **Not text** — less than 40% alphanumeric characters (catches binary data, ASCII art, raw hex) → skip
+- **Too short** — fragments under 20 characters (code snippets, acknowledgments)
+- **Not natural language** — binary data, ASCII art, raw output with less than 40% readable text
 
-Chunks that survive are passed through the **redaction engine** before embedding.
+### 3. Scrub secrets
 
-### 3. Redact secrets
+**Before anything is stored**, memoryd scrubs sensitive content using 13 detection patterns:
 
-Before anything is stored, 13 regex patterns scrub sensitive content:
-
-| Pattern | Replacement |
+| What's detected | Examples |
 |---|---|
-| AWS access keys (`AKIA...`) | `[REDACTED:AWS_KEY]` |
-| AWS secret keys | `[REDACTED:AWS_SECRET]` |
-| GitHub tokens (`ghp_`, `gho_`, PATs) | `[REDACTED:GITHUB_TOKEN]` |
-| Slack tokens (`xox...`) | `[REDACTED:SLACK_TOKEN]` |
-| Stripe keys (`sk_live_...`) | `[REDACTED:STRIPE_KEY]` |
-| Private key blocks (`-----BEGIN...`) | `[REDACTED:PRIVATE_KEY]` |
-| Connection strings (passwords in URIs) | `[REDACTED:CONNECTION_STRING]` |
-| JWTs (`eyJ...`) | `[REDACTED:JWT]` |
-| SSH keys | `[REDACTED:SSH_KEY]` |
-| Bearer tokens | `[REDACTED]` |
-| Generic API keys / secrets | `[REDACTED]` |
-| Passwords in key-value pairs | `[REDACTED]` |
+| Cloud credentials | AWS access keys, AWS secret keys |
+| API tokens | GitHub tokens, Slack tokens, Stripe keys |
+| Authentication secrets | JWTs, Bearer tokens, private keys, SSH keys |
+| Connection strings | Database URIs with embedded passwords |
+| Generic secrets | Key-value pairs containing `password`, `secret`, `token`, `api_key` |
 
-A second pass scans each line for key-value patterns containing sensitive keywords (`password`, `secret`, `token`, `api_key`, `credential`, etc.) and redacts their values.
+Detected values are replaced with safe placeholders (e.g., `[REDACTED:AWS_KEY]`). **Secrets never enter the shared knowledge store.** This is critical for team deployments where multiple people contribute to the same database.
 
-### 4. Batch embed
+### 4. Deduplicate
 
-Valid chunks are embedded in a single batch call to voyage-4-nano, producing one 1024-dimensional vector per chunk. Batching amortizes the overhead of model inference.
+Each new piece of knowledge is compared against what's already in the store:
 
-### 5. Deduplicate
-
-Each vector is compared against its nearest neighbor in the store:
-
-| Similarity | Action |
+| Similarity | What happens |
 |---|---|
-| **≥ 0.92** | **Duplicate** — skip entirely |
-| **≥ 0.75** (from a source) | **Source extension** — store with metadata linking it to the original: `extends_source`, `extends_memory`, `extends_score` |
-| **< 0.75** | **Novel** — store normally |
+| **Very high** (≥ 92%) | Already known — skip |
+| **Moderate** (≥ 75%, from a source) | Related to existing reference material — stored with a link back to the original |
+| **Low** | Novel knowledge — stored normally |
 
-Source extension tracking builds a knowledge graph: when agent-generated insights expand on ingested documentation, the link is preserved.
+This is especially valuable for teams: when three engineers independently learn the same thing about a service, it's stored once — not three times.
 
-### 6. Store
+### 5. Store
 
-Each surviving chunk becomes a `Memory` document in MongoDB:
+Each surviving piece becomes a knowledge item in the shared MongoDB store, available to every team member's AI tools immediately.
 
-```
-content, embedding, source, created_at, metadata
-```
+## Why async matters
 
-## Result accounting
+The entire capture pipeline runs in the background. The AI response streams back to the developer in real-time — memoryd processes it after delivery. Team members never experience any slowdown from the knowledge capture process.
 
-Every `ProcessFiltered` call returns a tally:
+## What builds over time
 
-```
-stored: 3 | duplicates: 1 | filtered: 2 | extended: 1
-```
+After a team has been using memoryd for a few weeks, the shared store typically contains:
 
-This feeds into the dashboard and quality stats for visibility into what's actually accumulating.
+- **Architecture decisions** — why the team chose specific patterns, from the conversations where those decisions were made
+- **Debugging playbooks** — how to diagnose common issues, from actual debugging sessions
+- **Deployment knowledge** — environment config, migration procedures, rollback steps
+- **Codebase conventions** — naming patterns, error handling approaches, testing strategies
+- **Integration details** — how services connect, what APIs expect, edge cases discovered in practice
 
-## Why async?
-
-The write path runs in a goroutine. The proxy returns the response to the agent immediately and processes memory in the background. This is critical — memory capture should never add latency to the developer experience.
+All of it captured organically, with secrets scrubbed and duplicates merged.

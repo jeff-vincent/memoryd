@@ -1,84 +1,59 @@
 ---
 sidebar_position: 3
-title: The Quality Loop
+title: Quality Maintenance
 ---
 
-# The Quality Loop
+# Quality Maintenance
 
-memoryd doesn't just accumulate memories — it maintains them. The **steward** is a background process that scores, prunes, and deduplicates the memory store on a recurring schedule.
+memoryd doesn't just accumulate knowledge — it curates it. A background process called the **steward** continuously scores, cleans, and deduplicates the shared knowledge base.
 
-## Why quality matters
+## Why this matters for teams
 
-Without curation, a memory store degrades into noise. Outdated patterns, one-off debugging conversations, and redundant explanations crowd out the signal. The steward solves this by treating memory quality as a feedback loop: memories that help agents answer questions survive; memories that don't, decay and eventually disappear.
+Without curation, a shared knowledge store degrades quickly. Outdated patterns, one-off debugging conversations, and redundant explanations crowd out the signal. The problem is worse with teams — more contributors means more noise.
+
+The steward solves this by treating quality as a feedback loop: knowledge that helps people answer questions survives and rises to the top. Knowledge that doesn't, fades away. No one needs to manually curate anything.
 
 ## Learning period
 
-For the first **50 retrieval events**, the steward stays hands-off. All memories are kept regardless of quality. This learning period lets the system accumulate enough usage signal before making judgment calls about what to keep.
+For the first 50 retrieval events, the steward stays hands-off. Everything is kept while the system learns what your team actually finds useful. Once enough usage data accumulates, quality-aware filtering activates automatically.
 
-The quality tracker watches retrieval events and exposes `IsLearning()` — after the threshold is crossed, quality-aware filtering activates across the system.
+## The maintenance cycle
 
-## The steward sweep
-
-Every **60 minutes** (configurable), the steward runs a three-phase sweep:
+Every 60 minutes (configurable), the steward runs a three-phase sweep:
 
 ### Phase 1: Score
 
-Every memory gets a quality score based on two factors:
+Every knowledge item gets a quality score based on two factors:
 
-**Usage signal:**
-$$
-\text{baseScore} = \frac{\log_2(\text{hitCount} + 1)}{\log_2(\text{maxHits} + 1)}
-$$
+- **Usage** — How often has this been retrieved? Items that are frequently surfaced in team members' sessions score higher.
+- **Recency** — How recently was this last useful? Unused knowledge decays over time (7-day half-life by default).
 
-Memories that have never been retrieved get a baseline score of `0.5` — neutral, not penalized.
+New items start with a neutral score and aren't penalized until they've had a chance to prove their value.
 
-**Time decay:**
-$$
-\text{decayFactor} = 0.5^{\text{timeSinceLastActive} / \text{halfLife}}
-$$
+### Phase 2: Clean up
 
-The half-life defaults to **7 days**. A memory retrieved yesterday keeps most of its score. A memory last retrieved a month ago has decayed significantly.
+A knowledge item is removed only when **all three** conditions are met:
 
-**Final score:**
-$$
-\text{qualityScore} = \text{baseScore} \times \text{decayFactor} \quad \in [0, 1]
-$$
+1. **Old enough** — exists for more than 24 hours (grace period)
+2. **Low quality** — score below the pruning threshold
+3. **Never retrieved** — zero evidence anyone found it useful
 
-"Last active" is the later of `lastRetrieved` and `createdAt`, so new memories aren't immediately penalized.
+This is deliberately conservative. Even a single retrieval saves an item from cleanup. The system only removes knowledge that has genuinely zero evidence of value.
 
-### Phase 2: Prune
+### Phase 3: Deduplicate
 
-A memory is deleted when **all three conditions** are true:
+When multiple team members learn the same thing independently (which happens constantly), near-duplicate items accumulate. The steward identifies pairs that are semantically very similar (≥ 88% similarity) and keeps the one with more usage signal.
 
-1. **Old enough** — created more than 24 hours ago (grace period)
-2. **Low quality** — score below `0.1`
-3. **Never retrieved** — hit count is exactly 0
+This is especially valuable for teams: three engineers debug the same service issue in the same week — the steward merges the redundant entries into one high-quality item.
 
-All three conditions must be met. A low-quality memory with even a single retrieval survives. A zero-hit memory that was created an hour ago survives. The system is conservative — it only removes memories with genuinely zero evidence of value.
+## How this helps at scale
 
-### Phase 3: Merge
+| Team size | Steward impact |
+|---|---|
+| **Small team (3-5)** | Mostly dedup and noise removal. Keeps the store clean as people ramp up. |
+| **Medium team (5-15)** | Cross-contributor dedup becomes significant. Quality scoring surfaces the team's most valuable knowledge. |
+| **Large team (15+)** | Essential. Without curation, the store would become too noisy for effective retrieval. The steward keeps signal-to-noise high. |
 
-Near-duplicate memories waste storage and dilute retrieval results. The steward scans for pairs with cosine similarity ≥ **0.88**:
+## Configuration
 
-- **Keep** the memory with the higher hit count (or the older one, if tied)
-- **Delete** the other
-
-This handles the common case where the same concept gets stored multiple times across different conversations — slight variations in wording that are semantically identical.
-
-## Tuning
-
-All steward parameters are configurable in `config.yaml`:
-
-```yaml
-steward:
-  interval_minutes: 60       # sweep frequency
-  prune_threshold: 0.1       # quality floor for pruning  
-  grace_period_hours: 24     # minimum age before pruning
-  decay_half_days: 7         # score half-life in days
-  merge_threshold: 0.88      # cosine sim for merge  
-  batch_size: 500            # memories per sweep batch
-```
-
-Lower `prune_threshold` keeps more borderline memories. Longer `decay_half_days` means memories retain score longer between retrievals. Higher `merge_threshold` means only near-exact duplicates get merged.
-
-See [Configuration](../configuration) for the full reference.
+All steward settings are tunable in `config.yaml`. See [Configuration](../configuration) for the full reference and team-specific tuning recommendations.

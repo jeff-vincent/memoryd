@@ -5,99 +5,86 @@ title: Configuration
 
 # Configuration
 
-memoryd reads configuration from `~/.memoryd/config.yaml`. All fields have sensible defaults — only `mongodb_atlas_uri` is required.
+memoryd reads configuration from `~/.memoryd/config.yaml` on each team member's machine. Only the MongoDB connection string is required — everything else has sensible defaults.
+
+## Minimal setup (what most team members need)
+
+```yaml
+mongodb_atlas_uri: "mongodb+srv://team-user:password@cluster0.mongodb.net/?retryWrites=true"
+atlas_mode: true
+```
+
+That's it for most people. The connection string comes from whoever set up the shared cluster. `atlas_mode: true` turns on the full feature set.
 
 ## Full reference
 
 ```yaml
-# Required — MongoDB connection string
-mongodb_atlas_uri: "mongodb+srv://user:pass@cluster0.mongodb.net/?retryWrites=true"
+# Required — shared MongoDB Atlas connection string
+mongodb_atlas_uri: "mongodb+srv://team:pass@cluster0.mongodb.net/?retryWrites=true"
 
-# Proxy port (default: 7432)
+# Local proxy port (default: 7432)
 port: 7432
 
 # MongoDB database name (default: "memoryd")
 mongodb_database: "memoryd"
 
-# Embedding model path (default: ~/.memoryd/models/voyage-4-nano.gguf)
-# Downloaded automatically on first run
+# Path to the local embedding model (auto-downloaded on first run)
 model_path: "~/.memoryd/models/voyage-4-nano.gguf"
 
-# Embedding dimensions (default: 1024)
-# Must match the model and your Atlas vector index
+# Embedding dimensions — must match the Atlas vector index (default: 1024)
 embedding_dim: 1024
 
-# Number of memories to retrieve per query (default: 5)
+# Number of knowledge items retrieved per query (default: 5)
 retrieval_top_k: 5
 
-# Max tokens of context to inject (default: 2048)
-# ~8KB of memory content per request
+# Maximum tokens of context injected per request (default: 2048)
 retrieval_max_tokens: 2048
 
-# Upstream API URL (default: https://api.anthropic.com)
+# Upstream LLM provider URL (default: https://api.anthropic.com)
 upstream_anthropic_url: "https://api.anthropic.com"
 
-# Enable Atlas hybrid search features (default: false)
-# Set to true when using a MongoDB Atlas cluster (not local)
+# Enable Atlas hybrid search (default: false)
+# Set to true when using a shared Atlas cluster
 atlas_mode: false
 
-# Steward configuration — memory quality maintenance
+# Quality maintenance settings
 steward:
-  # Minutes between steward sweeps (default: 60)
-  interval_minutes: 60
-
-  # Quality score below which memories are eligible for pruning (default: 0.1)
-  prune_threshold: 0.1
-
-  # Hours a memory must exist before pruning is considered (default: 24)
-  grace_period_hours: 24
-
-  # Days for quality score half-life decay (default: 7)
-  decay_half_days: 7
-
-  # Cosine similarity threshold for merging near-duplicates (default: 0.88)
-  merge_threshold: 0.88
-
-  # Memories processed per steward sweep (default: 500)
-  batch_size: 500
+  interval_minutes: 60       # How often the quality sweep runs
+  prune_threshold: 0.1       # Score below which low-value items are removed
+  grace_period_hours: 24     # Minimum age before removal is considered
+  decay_half_days: 7         # How quickly unused knowledge loses relevance
+  merge_threshold: 0.88      # Similarity threshold for deduplication
+  batch_size: 500            # Items processed per sweep
 ```
-
-## Minimal configuration
-
-```yaml
-mongodb_atlas_uri: "mongodb://localhost:27017/?directConnection=true"
-```
-
-Everything else defaults. This is all you need for local development with Atlas Local (Docker).
 
 ## Atlas mode
 
-Set `atlas_mode: true` when connected to a MongoDB Atlas cluster. This enables:
+When `atlas_mode: true`, memoryd enables:
 
-- **Hybrid search** — vector + full-text Lucene with RRF fusion and MMR diversification
-- **Quality pre-filtering** — search results filtered by quality score at the database level
-- **Source-scoped search** — filter results by source using regex
+- **Hybrid search** — combines meaning-based and keyword-based retrieval for more accurate results
+- **Quality pre-filtering** — search results are filtered by quality score at the database level
+- **Source-scoped search** — filter results by knowledge source
 
-Without `atlas_mode`, memoryd uses plain vector search, which works well for individual use but doesn't scale as effectively for [team deployments](team-knowledge-hub).
+This is the recommended setting for any team deployment using a shared Atlas cluster.
 
-## Steward tuning
+## Tuning for your team
 
-The steward defaults are calibrated for a typical solo developer workflow. For teams or high-volume stores, consider:
+The defaults work well for most teams. If you need to adjust:
 
-| Scenario | Adjustment |
+| Scenario | What to change |
 |---|---|
-| Large team, many contributors | Lower `interval_minutes` (30), increase `batch_size` (1000) |
-| Want to keep memories longer | Increase `decay_half_days` (14–30) |
-| Aggressive dedup | Lower `merge_threshold` (0.85) |
-| Conservative pruning | Lower `prune_threshold` (0.05), increase `grace_period_hours` (72) |
-| High-volume source ingestion | Increase `batch_size` (2000), lower `interval_minutes` (30) |
+| **Large team (10+ contributors)** | Lower `interval_minutes` to 30, increase `batch_size` to 1000 |
+| **Want to retain knowledge longer** | Increase `decay_half_days` to 14–30 |
+| **Seeing too many near-duplicates** | Lower `merge_threshold` to 0.85 |
+| **Want less aggressive cleanup** | Lower `prune_threshold` to 0.05, increase `grace_period_hours` to 72 |
+| **Heavy use of ingested sources** | Increase `batch_size` to 2000, lower `interval_minutes` to 30 |
 
 ## Environment variables
 
-The only environment variable memoryd uses indirectly is:
+The only environment variable relevant to memoryd is the one that connects your AI tool to the proxy:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:7432
 ```
 
-This isn't a memoryd config — it tells your agent to route through the memoryd proxy. memoryd itself reads everything from `config.yaml`.
+This tells Claude Code (or any Anthropic-compatible tool) to route through memoryd. memoryd itself reads everything from `config.yaml`.

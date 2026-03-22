@@ -2,7 +2,7 @@
 
 # memoryd
 
-**Persistent memory for coding agents — institutional knowledge that builds itself.**
+**Shared knowledge for engineering teams — built automatically from the work you already do.**
 
 [![CI](https://github.com/jeff-vincent/memoryd/actions/workflows/ci.yml/badge.svg)](https://github.com/jeff-vincent/memoryd/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jeff-vincent/memoryd)](https://goreportcard.com/report/github.com/jeff-vincent/memoryd)
@@ -14,35 +14,37 @@
 
 ---
 
-`memoryd` is a local daemon that gives coding agents long-term memory. It sits between your agent and the Anthropic API as a transparent proxy — capturing knowledge from every session, curating it automatically, and injecting relevant context into future conversations. No workflow changes, no special prompts. Just set one environment variable and your agent gets smarter over time.
+`memoryd` is a shared knowledge layer for engineering teams. It connects to your team's AI coding tools (Claude Code, Cursor, Windsurf, etc.) and transparently captures institutional knowledge from every session — architecture decisions, debugging insights, deployment procedures, codebase conventions. All of it flows into a shared MongoDB Atlas database that every team member's tools can draw from.
 
-It also exposes an **MCP server** that any agent (Cursor, Windsurf, custom pipelines) can use to search, store, and manage memories — making memoryd a **shared knowledge hub** for your entire team.
+No one writes documentation. No one maintains a wiki. **Knowledge builds itself from the work your team is already doing.**
 
 ```
-Developer → Agent → memoryd (localhost:7432) → Anthropic API
-                        ↕
-                   MongoDB Atlas ← shared across team
+Your Team's AI Tools → memoryd → LLM Provider
+                          ↕
+                    MongoDB Atlas (shared)
 ```
 
-**[Read the full documentation →](https://kindling-sh.github.io/memoryd/)**
+**[Read the full documentation →](https://jeff-vincent.github.io/memoryd/)**
 
 ## Quick Start
 
 ```bash
 # Install
-git clone https://github.com/kindling-sh/memoryd.git && cd memoryd && make build
+curl -fsSL https://raw.githubusercontent.com/jeff-vincent/memoryd/main/install.sh | bash
 
-# Configure (only mongodb_atlas_uri is required)
-./bin/memoryd start    # creates ~/.memoryd/config.yaml, then edit it
+# Configure — point at your team's shared Atlas cluster
+# Edit ~/.memoryd/config.yaml:
+#   mongodb_atlas_uri: "mongodb+srv://team:pass@cluster0.mongodb.net/..."
+#   atlas_mode: true
 
 # Run
-./bin/memoryd start
+memoryd start
 export ANTHROPIC_BASE_URL=http://127.0.0.1:7432
 ```
 
-The embedding model (~70 MB) downloads automatically on first launch. Work normally with Claude Code — memory builds in the background.
+Work normally with Claude Code — knowledge builds in the background and is available to the whole team.
 
-For MCP integration with any agent:
+For Cursor, Windsurf, or any MCP-compatible tool:
 
 ```json
 {
@@ -52,41 +54,43 @@ For MCP integration with any agent:
 }
 ```
 
-See the **[Getting Started](https://kindling-sh.github.io/memoryd/getting-started)** guide for full setup including MongoDB and Atlas configuration.
+See the **[Getting Started](https://jeff-vincent.github.io/memoryd/getting-started)** guide for full team setup.
+
+## Why memoryd?
+
+| Challenge | How memoryd helps |
+|---|---|
+| **Knowledge walks out the door** | Institutional knowledge is captured automatically and persisted in a shared store |
+| **Stale wikis and docs** | Knowledge stays current because it's built from current work |
+| **Slow onboarding** | New hires' AI tools inherit months of team context from day one |
+| **Repeated debugging** | One person's fix becomes everyone's knowledge |
+| **Tool fragmentation** | Works with Claude Code, Cursor, Windsurf, Cline — same knowledge store |
 
 ## How It Works
 
-### [Read Path](https://kindling-sh.github.io/memoryd/how-it-works/read-path)
+### [Knowledge Capture](https://jeff-vincent.github.io/memoryd/how-it-works/write-path)
 
-Every prompt is enriched with relevant context from the memory store. The query is embedded locally ([voyage-4-nano](https://huggingface.co/jsonMartin/voyage-4-nano-gguf), 1024 dims via llama.cpp), searched against MongoDB using vector or hybrid search (RRF + MMR), and injected into the system prompt — invisibly.
+Every AI response is captured asynchronously (zero latency impact), broken into meaningful pieces, scrubbed of secrets (API keys, tokens, passwords — 13 detection patterns), deduplicated, and stored in the shared database.
 
-### [Write Path](https://kindling-sh.github.io/memoryd/how-it-works/write-path)
+### [Context Retrieval](https://jeff-vincent.github.io/memoryd/how-it-works/read-path)
 
-Every response is captured asynchronously with zero added latency. Text is chunked at paragraph boundaries, noise-filtered, secret-redacted (13 regex patterns covering AWS keys, GitHub tokens, JWTs, private keys, connection strings, and more), batch-embedded, and deduplicated (cosine ≥ 0.92 = skip).
+Every prompt is enriched with relevant knowledge from the shared store. The AI tool sees prior context — from its own sessions and teammates' — without anyone asking for it.
 
-### [Quality Loop](https://kindling-sh.github.io/memoryd/how-it-works/quality-loop)
+### [Quality Maintenance](https://jeff-vincent.github.io/memoryd/how-it-works/quality-loop)
 
-A background steward scores every memory by retrieval frequency and recency decay, prunes zero-value memories after a grace period, and merges near-duplicates (cosine ≥ 0.88). The store self-maintains — no manual curation needed.
+A background process scores knowledge by usefulness and recency, prunes noise, and merges near-duplicates across the whole team's contributions. The store self-maintains.
 
-### [Hybrid Search](https://kindling-sh.github.io/memoryd/how-it-works/hybrid-search)
+### [Hybrid Search](https://jeff-vincent.github.io/memoryd/how-it-works/hybrid-search)
 
-When connected to Atlas, memoryd upgrades to a hybrid pipeline: vector search + full-text Lucene, fused with Reciprocal Rank Fusion (k=60), diversified with Maximal Marginal Relevance (λ=0.7). Exact keyword matches and semantic similarity work together.
+On Atlas, retrieval combines meaning-based and keyword-based search with diversity optimization. Finds both conceptually related and exact-match results.
 
-### [MCP Server](https://kindling-sh.github.io/memoryd/agents/mcp-server)
+### [Tool Integration](https://jeff-vincent.github.io/memoryd/agents/mcp-server)
 
-8 tools (`memory_search`, `memory_store`, `source_ingest`, `quality_stats`, etc.) exposed over stdio JSON-RPC. Any MCP-compatible agent can read from and write to the store. The store is the product, not the agent.
+Connects via transparent proxy (Claude Code) or MCP server (Cursor, Windsurf, any MCP tool). Different team members can use different tools — they all share the same knowledge.
 
-### [Proxy Mode](https://kindling-sh.github.io/memoryd/agents/proxy-mode)
+### [Team Knowledge Hub](https://jeff-vincent.github.io/memoryd/team-knowledge-hub)
 
-Transparent HTTP proxy on port 7432. Handles both sync and SSE streaming. Captures both sides of every conversation. Zero configuration beyond `ANTHROPIC_BASE_URL`.
-
-### [Read-Only Mode](https://kindling-sh.github.io/memoryd/agents/read-only-mode)
-
-Agents can consume institutional knowledge without contributing — connect via MCP, use `memory_search` only. Ideal for evaluation, security-sensitive contexts, or non-Anthropic agents.
-
-### [Team Knowledge Hub](https://kindling-sh.github.io/memoryd/team-knowledge-hub)
-
-Point every team member at a shared Atlas cluster. Each person works normally. Their sessions populate the store. The steward curates across all contributions. Knowledge accumulates organically — no one writes docs, no one maintains a wiki. The knowledge web builds itself.
+Point your team at a shared Atlas cluster. Each person works normally. Knowledge accumulates organically from daily work. Coming soon: team-scoped and BU-scoped knowledge layers that overlap naturally.
 
 ## Architecture
 
@@ -94,42 +98,41 @@ Point every team member at a shared Atlas cluster. Each person works normally. T
 cmd/memoryd/              CLI (cobra commands)
 internal/
   config/                 YAML config with defaults
-  chunker/                Paragraph-boundary text chunking (~512 token windows)
-  embedding/              Local embeddings via llama.cpp (voyage-4-nano, 1024-dim)
+  chunker/                Text chunking at natural boundaries
+  embedding/              Local embeddings (voyage-4-nano, 1024-dim)
   pipeline/
-    read.go               Embed → search → format context → inject
-    write.go              Chunk → filter → redact → batch embed → dedup → store
-    inject.go             XML context formatting with token budget
+    read.go               Search → format context → inject
+    write.go              Chunk → filter → scrub secrets → dedup → store
+    inject.go             Context formatting with token budget
   proxy/
     proxy.go              HTTP server, REST API, dashboard
-    anthropic.go          Anthropic proxy with sync + SSE streaming
+    anthropic.go          Anthropic proxy with streaming support
   store/
-    store.go              Interfaces: Store, QualityStore, SourceStore, HybridSearcher
-    mongo.go              MongoDB standalone / Atlas Local
-    atlas.go              Atlas hybrid search: vector + Lucene + RRF + MMR
-  redact/                 13 secret-scrubbing patterns
-  quality/                Retrieval tracking (50-event learning threshold)
-  steward/                Background sweep: score → prune → merge
-  ingest/                 Web source ingestion + change detection
-  crawler/                BFS crawler with SHA256 dedup
+    store.go              Store interfaces
+    mongo.go              MongoDB implementation
+    atlas.go              Atlas hybrid search (vector + text + RRF + MMR)
+  redact/                 Secret scrubbing (13 patterns)
+  quality/                Usage tracking and quality scoring
+  steward/                Background maintenance (score → prune → merge)
+  ingest/                 Source ingestion and change detection
+  crawler/                Web crawler with change detection
   mcp/                    MCP stdio server (8 tools)
-  export/                 Markdown export grouped by source
-website/                  Docusaurus documentation site
+  export/                 Markdown export
+website/                  Documentation site
 ```
 
 ## CLI
 
 ```
 memoryd start                    Start the daemon
-memoryd mcp                      Start as MCP stdio server
+memoryd mcp                      Start as MCP server
 memoryd status                   Check daemon health
-memoryd search "query"           Search memories (regex)
-memoryd forget <id>              Delete a memory
-memoryd wipe                     Clear the entire store
-memoryd env                      Print shell export command
-memoryd ingest <name> <url>      Crawl a URL into the store
+memoryd search "query"           Search the knowledge base
+memoryd ingest <name> <url>      Ingest a docs site or wiki
 memoryd sources                  List ingested sources
-memoryd export                   Export memories to markdown
+memoryd export                   Export knowledge to markdown
+memoryd forget <id>              Delete a specific item
+memoryd wipe                     Clear the entire store
 memoryd version                  Print version
 ```
 
@@ -138,10 +141,10 @@ memoryd version                  Print version
 Only `mongodb_atlas_uri` is required. Everything else has sensible defaults.
 
 ```yaml
-mongodb_atlas_uri: "mongodb+srv://..."   # Required
-port: 7432                                # Proxy port
-atlas_mode: false                         # true for hybrid search
-retrieval_top_k: 5                        # Memories per query
+mongodb_atlas_uri: "mongodb+srv://..."   # Required — team's shared cluster
+atlas_mode: true                          # Enable hybrid search (recommended)
+port: 7432                                # Local proxy port
+retrieval_top_k: 5                        # Knowledge items per query
 retrieval_max_tokens: 2048                # Context budget
 
 steward:
@@ -151,7 +154,7 @@ steward:
   decay_half_days: 7
 ```
 
-See the full **[Configuration Reference](https://kindling-sh.github.io/memoryd/configuration)** for all options and tuning guidance.
+See the full **[Configuration Reference](https://jeff-vincent.github.io/memoryd/configuration)**.
 
 ## Development
 
@@ -171,18 +174,18 @@ cd website && npm start
 
 ## Roadmap
 
-- [x] Transparent Anthropic proxy with SSE streaming
+- [x] Transparent Anthropic proxy with streaming
 - [x] Local embeddings (voyage-4-nano via llama.cpp)
 - [x] MCP server (8 tools, any agent)
 - [x] Source ingestion (crawl docs/wikis)
-- [x] Quality steward (scoring, pruning, merging)
+- [x] Quality maintenance (scoring, pruning, merging)
 - [x] Atlas hybrid search (vector + text + RRF + MMR)
-- [x] Batch embedding
-- [x] Security redaction (13 secret patterns)
+- [x] Secret scrubbing (13 detection patterns)
 - [x] Documentation site
+- [x] macOS menu bar app
+- [ ] Team-scoped knowledge (overlapping layers per team/BU)
 - [ ] OpenAI-compatible endpoint support
-- [ ] macOS menu bar app
-- [ ] Multi-provider store population (beyond Claude Code proxy)
+- [ ] Multi-provider support (beyond Anthropic)
 - [ ] Hosted team knowledge hub
 
 ## License

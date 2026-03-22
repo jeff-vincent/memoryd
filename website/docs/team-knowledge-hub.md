@@ -5,93 +5,162 @@ title: Team Knowledge Hub
 
 # Team Knowledge Hub
 
-memoryd isn't just a tool for individual developers. It's a knowledge layer for teams.
+memoryd isn't just a tool for individual developers. It's a **shared knowledge layer for your engineering organization** — one that builds itself from the work your team is already doing.
 
-## The problem
+## The problem memoryd solves
 
-Every team has institutional knowledge — how the deploy pipeline works, why that config flag exists, what the payment service expects in edge cases. This knowledge lives in people's heads, scattered Slack threads, outdated wiki pages, and tribal memory that walks out the door when someone leaves.
+Every engineering team has hard-won institutional knowledge:
 
-No one writes documentation. No one maintains a wiki. The knowledge that actually matters — the operational, contextual, hard-won understanding of how things work — stays invisible.
+- How the deploy pipeline actually works (not what the stale wiki says)
+- Why that config flag exists and when to change it
+- What the payment service expects in edge cases
+- How to diagnose that intermittent CI failure
 
-## The vision
+This knowledge lives in people's heads, buried Slack threads, outdated Confluence pages, and tribal memory that walks out the door when someone leaves or changes teams. No one writes documentation — or when they do, it's outdated by the time it's published.
 
-Point every team member's coding agent at a **shared MongoDB Atlas cluster**. Each person works normally. Their memoryd instance captures what they learn, what they ask about, what they debug.
-
-The steward curates. Duplicates merge. Stale memories decay. High-signal memories rise to the top. Over time, the team builds a living knowledge web — not through documentation effort, but through the natural act of working.
-
-```
-Developer A (Claude Code)  ──→ shared Atlas cluster ←── Developer B (Cursor + MCP)
-                                      ↕
-Developer C (MCP read-only) ←── steward curation ──→ Developer D (proxy mode)
-```
-
-Every agent session becomes a contribution. Every question becomes a signal about what matters. The knowledge accumulates organically and benefits everyone.
+**memoryd captures this knowledge automatically, keeps it current, and makes it available to everyone's AI tools — without anyone stopping to write docs.**
 
 ## How it works
 
-### Shared store
+Every team member runs memoryd locally. All instances connect to a **shared MongoDB Atlas cluster**. When anyone uses their AI coding tools (Claude Code, Cursor, Windsurf, etc.), the knowledge from those sessions flows into the shared store.
 
-All team members configure their memoryd instance to use the same Atlas connection string:
+```
+Engineer A (Claude Code)  ──→                         ←── Engineer B (Cursor)
+                               Shared Atlas Cluster
+Engineer C (read-only)    ←──                         ←── Engineer D (Claude Code)
+                                      ↕
+                              Quality Maintenance
+                          (dedup, scoring, pruning)
+```
+
+### Setup is minimal
+
+Each team member adds one line to their config:
 
 ```yaml
-# ~/.memoryd/config.yaml
 mongodb_atlas_uri: "mongodb+srv://team-cluster.mongodb.net/?retryWrites=true"
 atlas_mode: true
 ```
 
-That's it. The memories, retrievals, and quality signals all flow into the same database. Atlas handles the multi-tenancy at the infrastructure level.
+That's it. The knowledge store, quality signals, and cross-team deduplication all flow through the same database. Atlas handles the infrastructure.
 
-### Different agents, same store
+### Different tools, same knowledge
 
-The store is agent-agnostic. Team members can use different tools:
+The store is tool-agnostic. Team members can use whatever they prefer:
 
-| Team member | Agent | Integration | Contribution |
+| Team member | Their tool | Integration | What happens |
 |---|---|---|---|
-| Alice | Claude Code | Proxy mode | Automatic capture of all sessions |
-| Bob | Cursor | MCP server | Explicit search and store via tools |
-| Carol | Custom pipeline | MCP read-only | Reads team knowledge, doesn't write |
-| Dave | Claude Code | Proxy + MCP | Both automatic capture and explicit tools |
+| Alice | Claude Code | Proxy mode | Every session automatically captured and enriched |
+| Bob | Cursor | MCP server | Agent searches and stores via tool calls |
+| Carol | Windsurf | MCP (read-only) | Consumes team knowledge, doesn't contribute |
+| Dave | Custom pipeline | MCP server | Integrates with internal tooling |
 
-All four benefit from the same knowledge pool. Alice's debugging session about the auth service helps Bob when he encounters the same issue next week.
+All four benefit from the same knowledge pool. Alice's debugging session about the auth service helps Bob when he encounters the same issue next week. Carol's AI tool in Windsurf already knows the deployment procedure that Dave figured out last month.
 
-### Steward at scale
+### Quality at scale
 
-The steward becomes more valuable with a shared store:
+The [quality maintenance system](how-it-works/quality-loop) becomes *more* valuable with a shared store:
 
-- **Cross-session dedup** — when three developers independently learn the same thing, the merge phase (cosine similarity ≥ 0.88) consolidates to a single memory
-- **Collective signal** — a memory that gets retrieved across multiple team members' sessions earns a higher quality score faster
-- **Natural pruning** — one-off debugging artifacts that never get retrieved across the team decay and disappear
+- **Cross-contributor dedup** — when three engineers independently learn the same thing about a service, the system consolidates to a single knowledge item
+- **Collective signal** — knowledge that gets retrieved across multiple team members' sessions earns a higher quality score faster
+- **Natural pruning** — one-off debugging artifacts that are never useful to anyone else decay and disappear automatically
 
-### Source ingestion
+## Seeding your knowledge base
 
-Teams can prime the knowledge store with existing documentation:
+Teams can accelerate the ramp-up by ingesting existing documentation:
+
+```bash
+memoryd ingest "team-wiki" https://wiki.yourcompany.com/engineering
+memoryd ingest "api-docs" https://docs.internal.yourcompany.com
+```
+
+Or upload files directly through the dashboard or CLI. Ingested sources live alongside organically captured knowledge and go through the same quality process — scored by actual usefulness, not by when they were written.
+
+Over time, a search might return:
 
 ```
-memory_search: "how do deployments work?"
-→ (source: source:internal-wiki, score: 0.85) Production deployments require...
-→ (source: claude-code, score: 0.78) The deploy script checks for pending migrations...
+[1] (source: claude-code, relevance: 0.87)
+The auth service rejects tokens older than 24h — need to refresh before calling...
+
+[2] (source: source:internal-wiki, relevance: 0.82)
+Production deployments require approval in #releases before merging to main...
+
+[3] (source: mcp, relevance: 0.79)
+The payment webhook validates signatures using HMAC-SHA256 with the secret from...
 ```
 
-Ingested sources and agent-captured knowledge live side by side. The steward treats them equally — both are scored, pruned, and merged based on actual retrieval value.
-
-## Opt-in / opt-out
-
-memoryd respects individual choice:
-
-- **Full participation** — proxy mode or MCP with writes. Agent sessions feed the store and benefit from it.
-- **Read-only** — MCP with search only. Benefit from team knowledge without contributing. Useful for sensitive contexts or trial periods.
-- **Isolated** — point at a separate database or run local-only. No team sharing.
-
-There's no forced contribution. The value proposition of the shared store is strong enough that most team members opt in voluntarily — because the more people contribute, the more everyone benefits.
+Reference documentation and real-world experience, side by side.
 
 ## What builds over time
 
-After weeks of normal work across a team:
+After a team has been using memoryd for a few weeks:
 
-- **Deployment procedures** — captured from actual deploy sessions, not stale runbooks
-- **Architecture decisions** — the "why" behind design choices, from the conversations where they happened
-- **Debugging knowledge** — how to diagnose common issues, from the sessions where they were diagnosed
-- **Onboarding context** — new team members' agents immediately know what took others weeks to learn
-- **Codebase conventions** — naming patterns, testing approaches, error handling strategies — all captured from practice
+| Knowledge type | How it's captured |
+|---|---|
+| **Architecture decisions** | From the conversations where they were made — including the "why" |
+| **Debugging playbooks** | From actual debugging sessions, not theoretical runbooks |
+| **Deployment procedures** | From real deploy sessions — current, not last year's wiki page |
+| **Codebase conventions** | From code review discussions and implementation patterns |
+| **Integration details** | From sessions working with APIs and services — edge cases included |
+| **Onboarding context** | Accumulated from everyone — new hires inherit months of team knowledge on day one |
 
-The knowledge web is always current because it's built from current work. There's no documentation lag, no stale wiki, no "ask Sarah, she knows."
+The knowledge is always current because it's built from current work. There's no documentation lag, no stale wiki, no "ask Sarah, she knows."
+
+## Team-scoped knowledge (roadmap)
+
+Today, all team members sharing an Atlas cluster contribute to and read from a single knowledge pool. This works well for teams and small organizations.
+
+**Coming next: overlapping knowledge scopes aligned to teams and business units.**
+
+The idea is simple. Different teams work in different domains — the payments team, the platform team, the mobile team. Each generates domain-specific knowledge. But teams also overlap — the payments team shares context with the platform team around deployments, and with the mobile team around API contracts.
+
+```
+┌─────────────────────────────────────────────────┐
+│                  Organization                    │
+│                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
+│  │ Payments │  │ Platform │  │  Mobile  │      │
+│  │   Team   │  │   Team   │  │   Team   │      │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘      │
+│       │              │              │            │
+│       └──────┬───────┘              │            │
+│              │                      │            │
+│     Deploy knowledge         API contracts       │
+│      (shared scope)          (shared scope)      │
+│                                                  │
+│            Org-wide knowledge                    │
+│     (coding standards, CI/CD, security)          │
+└─────────────────────────────────────────────────┘
+```
+
+With scoped knowledge:
+
+- **Team scope** — each team's AI tools prioritize knowledge from their own domain
+- **Shared scopes** — overlapping areas surface knowledge from all contributing teams
+- **Org scope** — universal knowledge (coding standards, security practices, CI/CD) is available everywhere
+
+A payment engineer's AI tool would see: payments-specific knowledge first, shared deployment knowledge second, and org-wide standards third. A new hire on the mobile team would inherit both mobile-specific and org-wide knowledge from day one.
+
+This maps naturally to how organizations actually work — overlapping circles of context, not rigid silos.
+
+## Participation is opt-in
+
+memoryd respects individual choice:
+
+| Level | How | Best for |
+|---|---|---|
+| **Full participation** | Proxy or MCP with writes | Engineers who want maximum value — contribute and benefit |
+| **Read-only** | MCP search only | New hires, evaluators, PMs, security-sensitive contexts |
+| **Isolated** | Separate database | Teams that need a private store |
+
+There's no forced contribution. The value proposition of the shared store speaks for itself — the more people participate, the more everyone benefits. Most teams find that adoption is organic once a few people start and others see the results.
+
+## Getting started with your team
+
+1. **Start small** — pick 3-5 engineers for a pilot. Set up a shared Atlas cluster, install memoryd.
+2. **Work normally for a sprint** — no behavior changes needed. Knowledge accumulates from regular AI tool usage.
+3. **Show the results** — search the knowledge base, browse the dashboard. The value is visible within days.
+4. **Expand gradually** — add more team members. Connect them read-only first if preferred.
+5. **Seed with sources** — ingest team wikis, API docs, runbooks to accelerate the knowledge base.
+
+→ [Getting Started](getting-started) has the full setup guide.

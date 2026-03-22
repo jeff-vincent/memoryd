@@ -5,62 +5,66 @@ title: Read-Only Mode
 
 # Read-Only Mode
 
-Not every agent needs to write. Some should just listen.
+Not every tool or team member needs to write to the knowledge base. Some should just benefit from what's already there.
 
-## The concept
+## When to use read-only
 
-memoryd's knowledge store can be consumed without contributing to it. An agent connects via MCP, uses `memory_search` to retrieve context, and never calls `memory_store`. The knowledge it reads was built by other agents, other sessions, other team members.
-
-This is the simplest integration pattern and the fastest way to get value from an existing memory store.
-
-## Why read-only?
-
-**Institutional knowledge without the overhead.** A team has been using memoryd for weeks. The store contains hundreds of curated memories about the codebase — architectural decisions, deployment procedures, common pitfalls. A new team member (or a new tool) can immediately benefit from all of that by connecting read-only.
-
-**Agent-agnostic consumption.** The MCP server works with any MCP-compatible client. An agent running through Cursor, Windsurf, or a custom pipeline can read from the same store that Claude Code sessions have been populating. The write side doesn't need to match the read side.
-
-**Opt-out without opting out.** Some environments have policies about what data an AI agent can store. Read-only mode lets those environments still benefit from the knowledge that other (less restricted) environments have built.
-
-**Safe evaluation.** Trying memoryd for the first time? Connect read-only to an existing store. See what the retrieval quality looks like. Decide later whether to enable writes.
+- **New team members** — their AI tools immediately have access to weeks or months of accumulated team knowledge, without contributing until they're comfortable
+- **Evaluation** — trying memoryd before committing to a full rollout? Connect read-only and see what the retrieval quality looks like
+- **Security-sensitive contexts** — some teams or environments have policies about what AI tools can store. Read-only lets them benefit without contributing
+- **Non-engineering tools** — a PM's AI assistant can search the team's technical knowledge base without writing back to it
+- **Cross-team consumers** — teams that want to consume another team's knowledge without mixing their own context in
 
 ## Setup
 
-Configure memoryd as an MCP server:
+Configure memoryd as an MCP server in your tool's config:
 
 ```json
 {
   "mcpServers": {
     "memoryd": {
       "command": "memoryd",
-      "args": ["mcp"]
+      "args": ["mcp", "--read-only"]
     }
   }
 }
 ```
 
-Then simply don't use any write tools. The agent has access to all 8 MCP tools but only calls `memory_search`. There's no special flag — read-only is a usage pattern, not a configuration.
+The `--read-only` flag restricts the MCP server to search-only tools. Write operations (`memory_store`, `source_ingest`, etc.) are disabled.
 
-If you want to enforce read-only at the agent level, configure your agent's system prompt to only use `memory_search`:
+## What the tool sees
 
-```
-You have access to a memory_search tool. Use it to look up relevant context
-before answering questions about the codebase. Do not store new memories.
-```
-
-## What the agent sees
-
-When `memory_search` returns results, the agent gets formatted context:
+When the AI searches the knowledge base, it gets formatted results:
 
 ```
-[1] (source: claude-code, score: 0.87)
+[1] (source: claude-code, relevance: 0.87)
 The payment service validates webhook signatures using HMAC-SHA256...
 
-[2] (source: source:internal-wiki, score: 0.82)
+[2] (source: source:internal-wiki, relevance: 0.82)
 Deployments to production require approval from the #releases channel...
 ```
 
-Context from proxy sessions, MCP writes, and ingested sources — all surfaced through a single search.
+Knowledge from proxy sessions, MCP writes, and ingested sources — all surfaced through a single search. The AI tool doesn't know or care how the knowledge got there.
 
-## The bigger picture
+## The value for team leads
 
-Read-only mode is a stepping stone to the [team knowledge hub](../team-knowledge-hub) vision. Every team member's agent sessions populate a shared store. Any team member can connect read-only and benefit from the collective knowledge — even if they use a different agent, a different workflow, or choose not to contribute.
+Read-only mode is a low-risk entry point for team adoption:
+
+1. **Seed the store** — have a few engineers use memoryd normally for a sprint or two
+2. **Connect the rest read-only** — everyone benefits from the accumulated knowledge immediately
+3. **Opt in gradually** — team members switch to full participation when they see the value
+
+This approach lets you demonstrate ROI before asking the whole team to change anything about their workflow.
+
+## Participation spectrum
+
+memoryd supports a range of participation levels across a team:
+
+| Level | How | Best for |
+|---|---|---|
+| **Full (proxy)** | Automatic capture + retrieval | Engineers using Claude Code who want zero-effort contribution |
+| **Full (MCP)** | Agent-controlled search + store | Engineers using Cursor, Windsurf, custom tools |
+| **Read-only** | Search only, no writes | New hires, evaluators, PMs, cross-team consumers |
+| **Isolated** | Separate database | Anyone who needs a private knowledge store |
+
+There's no forced contribution. The value of the shared store is strong enough that most people opt into full participation voluntarily — because the more people contribute, the more everyone benefits.

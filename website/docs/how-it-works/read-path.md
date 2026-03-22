@@ -1,60 +1,45 @@
 ---
 sidebar_position: 1
-title: The Read Path
+title: How Knowledge is Retrieved
 ---
 
-# The Read Path
+# How Knowledge is Retrieved
 
-When an agent asks a question, memoryd retrieves relevant context from its memory store and injects it into the conversation — invisibly.
+When someone on your team starts an AI coding session, memoryd automatically surfaces relevant knowledge from the shared store — without anyone asking for it.
 
-## Flow
+## The flow
 
 ```
-User message → Embed → Search → Format → Inject into system prompt
+Team member asks a question → memoryd finds relevant knowledge → context injected into the AI's prompt
 ```
 
-### 1. Embed the query
+### 1. Understand the question
 
-The user's message is embedded using voyage-4-nano (1024 dimensions, running locally via llama.cpp). This produces a dense vector that captures the semantic meaning of what the user is asking about.
+When a team member's AI tool sends a prompt, memoryd analyzes what they're asking about. It converts the question into a mathematical representation (an embedding) that captures its meaning — not just keywords, but concepts.
 
-### 2. Search
+This happens locally on every team member's machine using a lightweight model. No data leaves the machine for this step.
 
-memoryd picks the best search strategy at runtime based on what your store supports:
+### 2. Search the shared store
 
-| Store type | Strategy | What it does |
-|---|---|---|
-| **Local** (MongoDB standalone) | Vector search | Pure cosine similarity, top-K nearest neighbors |
-| **Atlas** (cloud cluster) | Hybrid search | Vector + full-text Lucene, fused with RRF, diversified with MMR |
+memoryd searches the team's shared knowledge base for relevant items. The search strategy depends on your setup:
 
-Atlas hybrid search also applies quality pre-filtering — memories with a quality score below `0.05` are excluded (unless they're brand new and haven't been scored yet). This keeps garbage out of retrieval results without penalizing fresh memories.
+| Setup | How search works |
+|---|---|
+| **Atlas cluster** (recommended) | **Hybrid search** — combines meaning-based similarity with keyword matching, then diversifies results. Best for teams. |
+| **Local MongoDB** (solo dev) | **Vector search** — meaning-based similarity only. Good for individual use. |
 
-See [Hybrid Search](hybrid-search) for the full algorithm.
+With Atlas, the search also filters out low-quality items automatically — noise that was captured but never proved useful doesn't clutter the results.
 
-### 3. Format context
+See [Hybrid Search](hybrid-search) for how the Atlas search pipeline works.
 
-Retrieved memories are formatted into an XML block with a budget system:
+### 3. Inject context
 
-```xml
-<retrieved_context>
-The following context was retrieved from your long-term memory store.
-Use it if helpful, but do not mention its existence to the user.
----
-[1] (source: claude-code, score: 0.87)
-The authentication service uses JWT tokens with a 24-hour expiry...
----
-[2] (source: source:company-wiki, score: 0.82)
-Database migrations run via Flyway on deployment...
-</retrieved_context>
-```
+Relevant knowledge is formatted and injected into the AI's prompt — invisibly. The AI sees context from past sessions (its own and teammates') as part of its instructions. It doesn't know where the context came from, and the team member doesn't need to do anything special.
 
-The **token budget** (default: 2048 tokens, ~8192 characters) prevents context from overwhelming the agent's prompt window. Memories are appended in score order until the budget would be exceeded, then the rest are dropped.
+A token budget (default: ~2048 tokens) prevents context from overwhelming the prompt. The most relevant items are included first; the rest are dropped.
 
-### 4. Inject
+### 4. Quality feedback
 
-The formatted context is prepended to the system prompt in the proxied request. The agent sees the context as part of its instructions — it never needs to know how it got there.
+When knowledge items are retrieved, memoryd records that they were useful. Over time, items that are retrieved frequently earn higher quality scores. Items that are never retrieved eventually decay and are cleaned up by the [quality maintenance](quality-loop) process.
 
-## Quality feedback loop
-
-When memories are retrieved, their hit counts are incremented asynchronously. This feeds the [quality loop](quality-loop): memories that keep getting retrieved earn higher quality scores. Memories that never get retrieved eventually decay and are pruned.
-
-The first 50 retrieval events are a **learning period** — all memories are kept regardless of quality. After that threshold, the steward begins scoring and pruning based on actual retrieval patterns.
+This creates a virtuous cycle: the more your team uses memoryd, the better the knowledge quality becomes.
