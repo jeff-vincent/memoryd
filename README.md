@@ -4,11 +4,11 @@
 
 **Persistent memory for coding agents — institutional knowledge that builds itself.**
 
-[![CI](https://github.com/kindling-sh/memoryd/actions/workflows/ci.yml/badge.svg)](https://github.com/kindling-sh/memoryd/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/kindling-sh/memoryd)](https://goreportcard.com/report/github.com/kindling-sh/memoryd)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/kindling-sh/memoryd)](go.mod)
+[![CI](https://github.com/jeff-vincent/memoryd/actions/workflows/ci.yml/badge.svg)](https://github.com/jeff-vincent/memoryd/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jeff-vincent/memoryd)](https://goreportcard.com/report/github.com/jeff-vincent/memoryd)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/jeff-vincent/memoryd)](go.mod)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-memoryd-orange)](https://kindling-sh.github.io/memoryd/)
+[![Docs](https://img.shields.io/badge/docs-memoryd-orange)](https://jeff-vincent.github.io/memoryd/)
 
 </div>
 
