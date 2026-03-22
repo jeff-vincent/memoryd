@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+
+version: 2
+
+project_name: memoryd
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: memoryd
+    binary: memoryd
+    main: ./cmd/memoryd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE*
+
+brews:
+  - name: memoryd
+    repository:
+      owner: kindling-sh
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/kindling-sh/memoryd
+    description: Persistent memory layer for coding agents
+    license: MIT
+    install: |
+      bin.install "memoryd"
+    test: |
+      system "#{bin}/memoryd", "version"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: kindling-sh
+    name: memoryd
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+  extra_files:
+    - glob: dist/memoryd-tray-*

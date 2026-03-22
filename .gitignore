@@ -1,0 +1,10 @@
+bin/
+dist/
+/memoryd
+/memoryd-tray
+stress
+models/*.gguf
+.memoryd/
+website/node_modules/
+website/build/
+website/.docusaurus/

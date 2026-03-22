@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>memoryd</title>
+<style>
+  :root {
+    --bg: #f8f9fa;
+    --surface: #ffffff;
+    --border: #e1e4e8;
+    --border-light: #eef0f2;
+    --text: #24292f;
+    --text-secondary: #57606a;
+    --text-muted: #8b949e;
+    --accent: #0969da;
+    --accent-light: #ddf4ff;
+    --green: #1a7f37;
+    --green-bg: #dafbe1;
+    --yellow: #9a6700;
+    --yellow-bg: #fff8c5;
+    --red: #cf222e;
+    --red-bg: #ffebe9;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Segoe UI Mono", monospace;
+    --radius: 6px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px; line-height: 1.5; }
+
+  .layout { max-width: 1080px; margin: 0 auto; padding: 32px 24px; }
+
+  /* Header */
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .header-left h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 12px; }
+  .status-badge.ok { background: var(--green-bg); color: var(--green); }
+  .status-badge.down { background: var(--red-bg); color: var(--red); }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .header-right { font-size: 12px; color: var(--text-muted); }
+
+  /* Stat cards */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); }
+  .stat-label { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .stat-value { font-size: 26px; font-weight: 600; font-family: var(--mono); color: var(--text); line-height: 1.2; }
+  .stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  /* Sections */
+  .section { margin-bottom: 28px; }
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .section-title { font-size: 14px; font-weight: 600; }
+  .section-meta { font-size: 12px; color: var(--text-muted); }
+
+  /* Card container */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+
+  /* Table styles */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg); border-bottom: 1px solid var(--border); }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--border-light); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #f6f8fa; }
+
+  /* Tags */
+  .tag { display: inline-block; font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 12px; white-space: nowrap; }
+  .tag-source { background: var(--accent-light); color: var(--accent); }
+  .tag-ready { background: var(--green-bg); color: var(--green); }
+  .tag-crawling { background: var(--yellow-bg); color: var(--yellow); }
+  .tag-error { background: var(--red-bg); color: var(--red); }
+
+  /* Score bar */
+  .score-bar { display: inline-flex; align-items: center; gap: 6px; }
+  .score-track { width: 48px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .score-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+  .score-text { font-size: 12px; font-family: var(--mono); color: var(--text-secondary); }
+
+  /* Progress bar for quality learning */
+  .progress-container { margin-top: 6px; }
+  .progress-track { width: 100%; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
+
+  /* Content cell */
+  .content-cell { max-width: 480px; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Empty state */
+  .empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+  .tab { padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s, border-color 0.15s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Time display */
+  .time-ago { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+  /* Add source form */
+  .add-source-form { display: flex; gap: 8px; padding: 14px; border-bottom: 1px solid var(--border); align-items: flex-end; }
+  .form-group { display: flex; flex-direction: column; gap: 3px; }
+  .form-group label { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .form-group input { font-family: var(--font); font-size: 13px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s; }
+  .form-group input:focus { border-color: var(--accent); }
+  .form-group input::placeholder { color: var(--text-muted); }
+  .form-group.name-field input { width: 160px; }
+  .form-group.url-field { flex: 1; }
+  .form-group.url-field input { width: 100%; }
+  .btn { font-family: var(--font); font-size: 13px; font-weight: 500; padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: background 0.15s, border-color 0.15s; white-space: nowrap; }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover { background: #0860c4; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .form-message { font-size: 12px; padding: 0 14px 10px; }
+  .form-message.success { color: var(--green); }
+  .form-message.error { color: var(--red); }
+
+  /* Divider between forms */
+  .form-divider { display: flex; align-items: center; gap: 12px; padding: 0 14px; font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .form-divider::before, .form-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* Upload form */
+  .upload-form { display: flex; gap: 8px; padding: 14px; align-items: flex-end; border-bottom: 1px solid var(--border); }
+  .file-input-wrap { position: relative; flex: 1; }
+  .file-input-wrap input[type="file"] { font-family: var(--font); font-size: 13px; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); width: 100%; outline: none; }
+  .file-input-wrap input[type="file"]:focus { border-color: var(--accent); }
+  .file-count { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  @media (max-width: 768px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .layout { padding: 20px 16px; }
+  }
+  @media (max-width: 480px) {
+    .stats { grid-template-columns: 1fr; }
+  }
+
+  /* Knowledge list */
+  .knowledge-item { padding: 12px 14px; border-bottom: 1px solid var(--border-light); }
+  .knowledge-item:last-child { border-bottom: none; }
+  .knowledge-item:hover { background: #f6f8fa; }
+  .knowledge-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .knowledge-content { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; }
+  .knowledge-content[contenteditable="true"] { background: #fff; border: 1px solid var(--accent); border-radius: var(--radius); padding: 8px; outline: none; }
+  .knowledge-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .btn-sm { font-family: var(--font); font-size: 11px; font-weight: 500; padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; background: var(--surface); color: var(--text-secondary); transition: all 0.15s; }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.editing { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-sm.delete:hover { border-color: var(--red); color: var(--red); }
+  .knowledge-page { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <header>
+    <div class="header-left">
+      <h1>memoryd</h1>
+      <span class="status-badge down" id="statusBadge"><span class="status-dot"></span><span id="statusLabel">checking</span></span>
+    </div>
+    <div class="header-right" id="portDisplay"></div>
+  </header>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Knowledge chunks</div>
+      <div class="stat-value" id="memoryCount">&mdash;</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Knowledge sources</div>
+      <div class="stat-value" id="sourceCount">&mdash;</div>
+      <div class="stat-sub" id="sourceSub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Retrievals</div>
+      <div class="stat-value" id="retrievalCount">&mdash;</div>
+      <div class="stat-sub" id="retrievalSub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Quality learning</div>
+      <div class="stat-value" id="learningStatus">&mdash;</div>
+      <div class="stat-sub" id="learningSub"></div>
+      <div class="progress-container" id="learningProgress" style="display:none">
+        <div class="progress-track"><div class="progress-fill" id="learningFill"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="card">
+      <div class="tabs">
+        <div class="tab active" data-tab="knowledge">Knowledge base</div>
+        <div class="tab" data-tab="sources">Knowledge sources</div>
+      </div>
+
+      <div class="tab-content active" id="tab-knowledge">
+        <div style="padding:14px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)">
+          <select id="sourceFilter" style="font-family:var(--font);font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);outline:none">
+            <option value="">All sources</option>
+          </select>
+          <input type="text" id="knowledgeSearch" placeholder="Search knowledge..." style="flex:1;font-family:var(--font);font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);outline:none">
+        </div>
+        <div id="knowledgeList">
+          <div class="empty-state">Select a source or search to browse knowledge</div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="tab-sources">
+        <form class="add-source-form" id="addSourceForm" autocomplete="off">
+          <div class="form-group name-field">
+            <label for="sourceName">Name</label>
+            <input type="text" id="sourceName" placeholder="e.g. Company Docs" required>
+          </div>
+          <div class="form-group url-field">
+            <label for="sourceURL">Base URL to crawl</label>
+            <input type="url" id="sourceURL" placeholder="https://docs.example.com" required>
+          </div>
+          <button type="submit" class="btn btn-primary" id="addSourceBtn">Add source</button>
+        </form>
+        <div class="form-message" id="formMessage" style="display:none"></div>
+        <div class="form-divider">or upload files</div>
+        <form class="upload-form" id="uploadForm" autocomplete="off">
+          <div class="form-group name-field">
+            <label for="uploadName">Name</label>
+            <input type="text" id="uploadName" placeholder="e.g. Design Docs" required>
+          </div>
+          <div class="form-group" style="flex:1">
+            <label for="uploadFiles">Files</label>
+            <div class="file-input-wrap">
+              <input type="file" id="uploadFiles" multiple accept=".md,.txt,.html,.htm,.json,.yaml,.yml,.go,.py,.js,.ts,.rst,.xml,.csv,.toml" required>
+              <div class="file-count" id="fileCount"></div>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary" id="uploadBtn">Upload</button>
+        </form>
+        <div class="form-message" id="uploadMessage" style="display:none"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>URL</th>
+              <th>Status</th>
+              <th>Pages</th>
+              <th>Memories</th>
+              <th>Last crawled</th>
+            </tr>
+          </thead>
+          <tbody id="sourceRows">
+            <tr><td colspan="6" class="empty-state">No sources ingested</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = '';
+
+// --- Tabs ---
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// --- Health ---
+async function checkHealth() {
+  try {
+    const r = await fetch(BASE + '/health');
+    const j = await r.json();
+    const ok = j.status === 'ok';
+    const badge = document.getElementById('statusBadge');
+    badge.className = 'status-badge ' + (ok ? 'ok' : 'down');
+    document.getElementById('statusLabel').textContent = ok ? 'healthy' : 'unhealthy';
+    document.getElementById('portDisplay').textContent = 'Port ' + (location.port || '7432');
+  } catch(e) {
+    document.getElementById('statusBadge').className = 'status-badge down';
+    document.getElementById('statusLabel').textContent = 'unreachable';
+  }
+}
+
+// --- Helpers ---
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function scoreBar(score) {
+  const pct = Math.round(score * 100);
+  return '<div class="score-bar">' +
+    '<div class="score-track"><div class="score-fill" style="width:' + pct + '%"></div></div>' +
+    '<span class="score-text">' + score.toFixed(2) + '</span></div>';
+}
+
+function sourceTag(source) {
+  if (!source) return '';
+  const label = source.length > 30 ? source.slice(0, 30) + '...' : source;
+  return '<span class="tag tag-source">' + esc(label) + '</span>';
+}
+
+function statusTag(status) {
+  const cls = status === 'ready' ? 'tag-ready' : status === 'crawling' ? 'tag-crawling' : 'tag-error';
+  return '<span class="tag ' + cls + '">' + esc(status) + '</span>';
+}
+
+// --- Dashboard load ---
+async function loadDashboard() {
+  try {
+    const r = await fetch(BASE + '/api/dashboard');
+    const d = await r.json();
+
+    // Stats
+    document.getElementById('memoryCount').textContent = d.memory_count || 0;
+
+    document.getElementById('sourceCount').textContent = d.source_count || 0;
+    if (d.sources && d.sources.length > 0) {
+      const crawling = d.sources.filter(s => s.status === 'crawling').length;
+      document.getElementById('sourceSub').textContent = crawling > 0 ? crawling + ' crawling' : 'all ready';
+    }
+
+    const q = d.quality || {};
+    document.getElementById('retrievalCount').textContent = q.event_count || 0;
+    document.getElementById('retrievalSub').textContent = 'across all searches';
+
+    if (q.learning) {
+      document.getElementById('learningStatus').textContent = 'Active';
+      document.getElementById('learningStatus').style.fontSize = '16px';
+      const pct = Math.min(100, Math.round((q.event_count / q.threshold) * 100));
+      document.getElementById('learningSub').textContent = q.event_count + ' / ' + q.threshold + ' events';
+      document.getElementById('learningProgress').style.display = 'block';
+      document.getElementById('learningFill').style.width = pct + '%';
+    } else {
+      document.getElementById('learningStatus').textContent = 'Complete';
+      document.getElementById('learningStatus').style.fontSize = '16px';
+      document.getElementById('learningSub').textContent = 'Quality filtering enabled';
+      document.getElementById('learningProgress').style.display = 'none';
+    }
+
+    // Populate source filter dropdown
+    const select = document.getElementById('sourceFilter');
+    const currentVal = select.value;
+    const sources = d.sources || [];
+    select.innerHTML = '<option value="">All sources</option>';
+    sources.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.name + ' (' + s.memory_count + ')';
+      select.appendChild(opt);
+    });
+    select.value = currentVal;
+
+    // Sources table
+    const sourceBody = document.getElementById('sourceRows');
+    if (sources.length === 0) {
+      sourceBody.innerHTML = '<tr><td colspan="6" class="empty-state">No knowledge sources ingested yet.</td></tr>';
+    } else {
+      sourceBody.innerHTML = sources.map(s => {
+        const url = s.base_url.length > 40 ? s.base_url.slice(0, 40) + '...' : s.base_url;
+        return '<tr>' +
+          '<td style="font-weight:500">' + esc(s.name) + '</td>' +
+          '<td style="font-size:12px;color:var(--text-secondary)">' + esc(url) + '</td>' +
+          '<td>' + statusTag(s.status) + '</td>' +
+          '<td>' + s.page_count + '</td>' +
+          '<td>' + s.memory_count + '</td>' +
+          '<td class="time-ago">' + fmtTime(s.last_crawled) + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+  } catch(e) {
+    console.error('Dashboard load failed:', e);
+  }
+}
+
+// --- Knowledge base ---
+let knowledgeSearchTimeout = null;
+
+document.getElementById('sourceFilter').addEventListener('change', loadKnowledge);
+document.getElementById('knowledgeSearch').addEventListener('input', () => {
+  clearTimeout(knowledgeSearchTimeout);
+  knowledgeSearchTimeout = setTimeout(loadKnowledge, 300);
+});
+
+async function loadKnowledge() {
+  const sourceId = document.getElementById('sourceFilter').value;
+  const search = document.getElementById('knowledgeSearch').value.trim();
+  const list = document.getElementById('knowledgeList');
+
+  list.innerHTML = '<div class="empty-state">Loading...</div>';
+
+  try {
+    let memories = [];
+    if (sourceId) {
+      const r = await fetch(BASE + '/api/sources/' + sourceId + '/memories');
+      memories = await r.json();
+    } else {
+      const r = await fetch(BASE + '/api/memories?q=' + encodeURIComponent(search));
+      memories = await r.json();
+    }
+
+    // Client-side filter by search text if both source and search are active.
+    if (sourceId && search) {
+      const lower = search.toLowerCase();
+      memories = memories.filter(m => m.content.toLowerCase().includes(lower));
+    }
+
+    if (!memories || memories.length === 0) {
+      list.innerHTML = '<div class="empty-state">No knowledge chunks found</div>';
+      return;
+    }
+
+    list.innerHTML = memories.map(m => {
+      const pageUrl = (m.metadata && m.metadata.page_url) || '';
+      const sourceName = (m.metadata && m.metadata.source_name) || m.source || '';
+      const content = m.content || '';
+      return '<div class="knowledge-item" data-id="' + esc(m.id) + '">' +
+        '<div class="knowledge-meta">' +
+          '<span class="tag tag-source">' + esc(sourceName) + '</span>' +
+          (pageUrl ? '<span class="knowledge-page" title="' + esc(pageUrl) + '">' + esc(pageUrl) + '</span>' : '') +
+          '<span class="time-ago">' + fmtTime(m.created_at) + '</span>' +
+        '</div>' +
+        '<div class="knowledge-content" id="content-' + esc(m.id) + '">' + esc(content) + '</div>' +
+        '<div class="knowledge-actions">' +
+          '<button class="btn-sm" onclick="toggleEdit(\'' + esc(m.id) + '\', this)">Edit</button>' +
+          '<button class="btn-sm delete" onclick="deleteMemory(\'' + esc(m.id) + '\')">Delete</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    list.innerHTML = '<div class="empty-state">Error loading knowledge: ' + esc(e.message) + '</div>';
+  }
+}
+
+function toggleEdit(id, btn) {
+  const el = document.getElementById('content-' + id);
+  if (el.contentEditable === 'true') {
+    // Save.
+    const newContent = el.textContent;
+    el.contentEditable = 'false';
+    btn.textContent = 'Edit';
+    btn.classList.remove('editing');
+    saveMemory(id, newContent);
+  } else {
+    el.contentEditable = 'true';
+    el.focus();
+    btn.textContent = 'Save';
+    btn.classList.add('editing');
+  }
+}
+
+async function saveMemory(id, content) {
+  try {
+    const r = await fetch(BASE + '/api/memories/' + id, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content })
+    });
+    if (!r.ok) {
+      const j = await r.json();
+      alert('Save failed: ' + (j.error || 'Unknown error'));
+    } else {
+      loadDashboard();
+    }
+  } catch(e) {
+    alert('Save failed: ' + e.message);
+  }
+}
+
+async function deleteMemory(id) {
+  if (!confirm('Delete this knowledge chunk?')) return;
+  try {
+    await fetch(BASE + '/api/memories/' + id, { method: 'DELETE' });
+    const el = document.querySelector('[data-id="' + id + '"]');
+    if (el) el.remove();    loadDashboard();  } catch(e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+// --- Add source ---
+document.getElementById('addSourceForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('addSourceBtn');
+  const msg = document.getElementById('formMessage');
+  const nameInput = document.getElementById('sourceName');
+  const urlInput = document.getElementById('sourceURL');
+  const name = nameInput.value.trim();
+  const url = urlInput.value.trim();
+  if (!name || !url) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Adding...';
+  msg.style.display = 'none';
+
+  try {
+    const r = await fetch(BASE + '/api/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, base_url: url })
+    });
+    const j = await r.json();
+    if (r.ok) {
+      msg.className = 'form-message success';
+      msg.textContent = 'Source added. Crawl started.';
+      msg.style.display = 'block';
+      nameInput.value = '';
+      urlInput.value = '';
+      setTimeout(() => { msg.style.display = 'none'; }, 4000);
+      loadDashboard();
+    } else {
+      msg.className = 'form-message error';
+      msg.textContent = j.error || 'Failed to add source.';
+      msg.style.display = 'block';
+    }
+  } catch(err) {
+    msg.className = 'form-message error';
+    msg.textContent = 'Request failed: ' + err.message;
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Add source';
+  }
+});
+
+// --- File count label ---
+document.getElementById('uploadFiles').addEventListener('change', function() {
+  const n = this.files.length;
+  document.getElementById('fileCount').textContent = n ? n + ' file' + (n > 1 ? 's' : '') + ' selected' : '';
+});
+
+// --- Upload files ---
+document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('uploadBtn');
+  const msg = document.getElementById('uploadMessage');
+  const nameInput = document.getElementById('uploadName');
+  const fileInput = document.getElementById('uploadFiles');
+  const name = nameInput.value.trim();
+  if (!name || !fileInput.files.length) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Uploading...';
+  msg.style.display = 'none';
+
+  try {
+    const fd = new FormData();
+    fd.append('name', name);
+    for (const f of fileInput.files) {
+      fd.append('files', f);
+    }
+    const r = await fetch(BASE + '/api/sources/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (r.ok) {
+      msg.className = 'form-message success';
+      msg.textContent = j.message || 'Files uploaded.';
+      msg.style.display = 'block';
+      nameInput.value = '';
+      fileInput.value = '';
+      document.getElementById('fileCount').textContent = '';
+      setTimeout(() => { msg.style.display = 'none'; }, 4000);
+      loadDashboard();
+    } else {
+      msg.className = 'form-message error';
+      msg.textContent = j.error || 'Upload failed.';
+      msg.style.display = 'block';
+    }
+  } catch(err) {
+    msg.className = 'form-message error';
+    msg.textContent = 'Request failed: ' + err.message;
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload';
+  }
+});
+
+// Init
+checkHealth();
+loadDashboard();
+loadKnowledge();
+setInterval(checkHealth, 10000);
+setInterval(loadDashboard, 15000);
+</script>
+</body>
+</html>
