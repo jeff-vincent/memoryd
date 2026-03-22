@@ -158,7 +158,9 @@ func startCmd() *cobra.Command {
 				<-sigCh
 				log.Println("Shutting down...")
 				stw.Stop()
-				srv.Stop()
+				if err := srv.Stop(); err != nil {
+					log.Printf("server stop error: %v", err)
+				}
 				cancel()
 			}()
 
@@ -350,8 +352,12 @@ func wipeCmd() *cobra.Command {
 			// Also remove all knowledge sources and their page records.
 			sources, _ := st.ListSources(context.Background())
 			for _, s := range sources {
-				st.DeleteSourcePages(context.Background(), s.ID)
-				st.DeleteSource(context.Background(), s.ID.Hex())
+				if err := st.DeleteSourcePages(context.Background(), s.ID); err != nil {
+					log.Printf("delete source pages error: %v", err)
+				}
+				if err := st.DeleteSource(context.Background(), s.ID.Hex()); err != nil {
+					log.Printf("delete source error: %v", err)
+				}
 			}
 
 			fmt.Println("All memories deleted.")

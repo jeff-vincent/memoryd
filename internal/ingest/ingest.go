@@ -196,7 +196,9 @@ func (ing *Ingester) IngestFiles(ctx context.Context, src store.Source, files []
 
 		// File is new or changed — delete old memories for this file.
 		if existing != nil {
-			ing.sourceStore.DeleteMemoriesBySource(ctx, fileLabel)
+			if err := ing.sourceStore.DeleteMemoriesBySource(ctx, fileLabel); err != nil {
+				log.Printf("[ingest] delete old memories error for %s: %v", fileLabel, err)
+			}
 		}
 
 		chunks := chunker.Chunk(content, chunker.DefaultMaxTokens)
@@ -235,11 +237,13 @@ func (ing *Ingester) IngestFiles(ctx context.Context, src store.Source, files []
 		}
 
 		// Record the file for change detection.
-		ing.sourceStore.UpsertSourcePage(ctx, store.SourcePage{
+		if err := ing.sourceStore.UpsertSourcePage(ctx, store.SourcePage{
 			SourceID:    sourceID,
 			URL:         f.Filename,
 			ContentHash: hash,
-		})
+		}); err != nil {
+			log.Printf("[ingest] upsert page error for %s: %v", f.Filename, err)
+		}
 	}
 
 	if err := ing.sourceStore.UpdateSourceStatus(ctx, src.ID.Hex(), "ready", "", len(files), memoryCount); err != nil {

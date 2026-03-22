@@ -97,7 +97,9 @@ func (h *sourceAPIHandler) handleSources(w http.ResponseWriter, r *http.Request)
 			defer crawlCancel()
 			if err := h.ingester.IngestSource(crawlCtx, src); err != nil {
 				log.Printf("[source-api] crawl error for %s: %v", src.Name, err)
-				h.sourceStore.UpdateSourceStatus(context.Background(), id, "error", err.Error(), 0, 0)
+				if e := h.sourceStore.UpdateSourceStatus(context.Background(), id, "error", err.Error(), 0, 0); e != nil {
+					log.Printf("[source-api] status update error: %v", e)
+				}
 			}
 		}()
 
@@ -187,7 +189,9 @@ func (h *sourceAPIHandler) handleUpload(w http.ResponseWriter, r *http.Request) 
 		defer uploadCancel()
 		if err := h.ingester.IngestFiles(uploadCtx, src, files); err != nil {
 			log.Printf("[source-api] upload error for %s: %v", src.Name, err)
-			h.sourceStore.UpdateSourceStatus(context.Background(), id, "error", err.Error(), 0, 0)
+			if e := h.sourceStore.UpdateSourceStatus(context.Background(), id, "error", err.Error(), 0, 0); e != nil {
+				log.Printf("[source-api] status update error: %v", e)
+			}
 		}
 	}()
 
@@ -263,7 +267,9 @@ func (h *sourceAPIHandler) handleSourceByID(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		h.sourceStore.UpdateSourceStatus(ctx, id, "crawling", "", found.PageCount, found.MemoryCount)
+		if err := h.sourceStore.UpdateSourceStatus(ctx, id, "crawling", "", found.PageCount, found.MemoryCount); err != nil {
+			log.Printf("[source-api] status update error: %v", err)
+		}
 
 		src := *found
 		go func() {
@@ -271,7 +277,9 @@ func (h *sourceAPIHandler) handleSourceByID(w http.ResponseWriter, r *http.Reque
 			defer crawlCancel()
 			if err := h.ingester.IngestSource(crawlCtx, src); err != nil {
 				log.Printf("[source-api] refresh error for %s: %v", src.Name, err)
-				h.sourceStore.UpdateSourceStatus(context.Background(), id, "error", err.Error(), 0, 0)
+				if e := h.sourceStore.UpdateSourceStatus(context.Background(), id, "error", err.Error(), 0, 0); e != nil {
+					log.Printf("[source-api] status update error: %v", e)
+				}
 			}
 		}()
 
