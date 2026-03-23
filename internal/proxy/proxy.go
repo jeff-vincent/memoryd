@@ -74,7 +74,7 @@ func NewServer(cfg *config.Config, read *pipeline.ReadPipeline, write *pipeline.
 
 	if so.store != nil {
 		registerDashboard(mux, so.store, so.sourceStore, so.quality)
-		registerAPI(mux, so.store, read, write, so.embedder)
+		registerAPI(mux, so.store, read, write, so.embedder, cfg)
 	}
 
 	if so.sourceStore != nil && so.ingester != nil {

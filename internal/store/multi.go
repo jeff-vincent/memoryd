@@ -15,6 +15,8 @@ type DatabaseEntry struct {
 	Name     string // Human label (e.g., "platform", "payments")
 	Database string // MongoDB database name
 	Role     string // "full" or "read-only"
+	URI      string // Connection string (empty = shared primary URI)
+	Enabled  bool   // Whether this database is active for search
 
 	Store       Store       // base store (MongoStore)
 	SearchStore Store       // may be AtlasStore (HybridSearcher) or MongoStore
@@ -29,9 +31,10 @@ func (de *DatabaseEntry) IsWritable() bool {
 // MultiStore fans out reads across multiple databases and routes writes
 // to the appropriate one. It implements Store and HybridSearcher.
 type MultiStore struct {
-	entries  []DatabaseEntry
-	byName   map[string]*DatabaseEntry
-	primary  *DatabaseEntry // first writable entry — default write target
+	mu      sync.RWMutex
+	entries []DatabaseEntry
+	byName  map[string]*DatabaseEntry
+	primary *DatabaseEntry // first writable entry — default write target
 }
 
 // NewMultiStore creates a fan-out store across multiple databases.
@@ -47,6 +50,7 @@ func NewMultiStore(entries []DatabaseEntry) (*MultiStore, error) {
 	}
 
 	for i := range entries {
+		entries[i].Enabled = true
 		ms.byName[entries[i].Name] = &entries[i]
 		if entries[i].IsWritable() && ms.primary == nil {
 			ms.primary = &entries[i]
@@ -104,7 +108,7 @@ func (ms *MultiStore) HybridSearch(ctx context.Context, embedding []float32, top
 	}, topK)
 }
 
-// fanOutSearch runs a search function against all databases in parallel,
+// fanOutSearch runs a search function against all enabled databases in parallel,
 // merges results by score, and returns the top-k.
 func (ms *MultiStore) fanOutSearch(ctx context.Context, searchFn func(*DatabaseEntry) ([]Memory, error), topK int) ([]Memory, error) {
 	type result struct {
@@ -113,10 +117,19 @@ func (ms *MultiStore) fanOutSearch(ctx context.Context, searchFn func(*DatabaseE
 		err      error
 	}
 
-	results := make(chan result, len(ms.entries))
+	ms.mu.RLock()
+	active := make([]*DatabaseEntry, 0, len(ms.entries))
+	for i := range ms.entries {
+		if ms.entries[i].Enabled {
+			active = append(active, &ms.entries[i])
+		}
+	}
+	ms.mu.RUnlock()
+
+	results := make(chan result, len(active))
 	var wg sync.WaitGroup
 
-	for i := range ms.entries {
+	for _, e := range active {
 		wg.Add(1)
 		go func(e *DatabaseEntry) {
 			defer wg.Done()
@@ -132,7 +145,7 @@ func (ms *MultiStore) fanOutSearch(ctx context.Context, searchFn func(*DatabaseE
 				mems[j].Metadata["database"] = e.Name
 			}
 			results <- result{memories: mems, name: e.Name, err: err}
-		}(&ms.entries[i])
+		}(e)
 	}
 
 	wg.Wait()
@@ -183,10 +196,18 @@ func (ms *MultiStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// List returns memories from all databases, merged.
+// List returns memories from all enabled databases, merged.
 func (ms *MultiStore) List(ctx context.Context, query string, limit int) ([]Memory, error) {
+	ms.mu.RLock()
+	snapshot := make([]DatabaseEntry, len(ms.entries))
+	copy(snapshot, ms.entries)
+	ms.mu.RUnlock()
+
 	var all []Memory
-	for _, e := range ms.entries {
+	for _, e := range snapshot {
+		if !e.Enabled {
+			continue
+		}
 		mems, err := e.Store.List(ctx, query, limit)
 		if err != nil {
 			log.Printf("[multistore] list error on %s: %v", e.Name, err)
@@ -413,13 +434,17 @@ type DatabaseInfo struct {
 	Name     string `json:"name"`
 	Database string `json:"database"`
 	Role     string `json:"role"`
+	URI      string `json:"uri,omitempty"`
+	Enabled  bool   `json:"enabled"`
 }
 
 // DatabaseList returns info about all configured databases.
 func (ms *MultiStore) DatabaseList() []DatabaseInfo {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 	out := make([]DatabaseInfo, len(ms.entries))
 	for i, e := range ms.entries {
-		out[i] = DatabaseInfo{Name: e.Name, Database: e.Database, Role: e.Role}
+		out[i] = DatabaseInfo{Name: e.Name, Database: e.Database, Role: e.Role, URI: e.URI, Enabled: e.Enabled}
 	}
 	return out
 }
@@ -490,4 +515,85 @@ func (ms *MultiStore) DeleteTargeted(ctx context.Context, dbName string, id stri
 		return fmt.Errorf("database %q is read-only", dbName)
 	}
 	return e.Store.Delete(ctx, id)
+}
+
+// --- Runtime database management --- //
+
+// AddEntry adds a new database entry at runtime.
+// The caller must already have a connected MongoStore/AtlasStore.
+func (ms *MultiStore) AddEntry(entry DatabaseEntry) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	if _, exists := ms.byName[entry.Name]; exists {
+		return fmt.Errorf("database %q already exists", entry.Name)
+	}
+
+	// Secondary databases are always read-only.
+	entry.Role = "read-only"
+	entry.Enabled = true
+
+	ms.entries = append(ms.entries, entry)
+	ms.byName[entry.Name] = &ms.entries[len(ms.entries)-1]
+	log.Printf("[multistore] added database %q (read-only)", entry.Name)
+	return nil
+}
+
+// RemoveEntry disconnects and removes a secondary database at runtime.
+// The primary database cannot be removed.
+func (ms *MultiStore) RemoveEntry(name string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	e, ok := ms.byName[name]
+	if !ok {
+		return fmt.Errorf("database %q not found", name)
+	}
+	if e == ms.primary {
+		return fmt.Errorf("cannot remove the primary database")
+	}
+
+	// Close the store connection.
+	e.Store.Close()
+
+	// Remove from entries slice.
+	for i := range ms.entries {
+		if ms.entries[i].Name == name {
+			ms.entries = append(ms.entries[:i], ms.entries[i+1:]...)
+			break
+		}
+	}
+	delete(ms.byName, name)
+
+	// Rebuild byName pointers (slice may have shifted).
+	ms.byName = make(map[string]*DatabaseEntry, len(ms.entries))
+	for i := range ms.entries {
+		ms.byName[ms.entries[i].Name] = &ms.entries[i]
+	}
+
+	log.Printf("[multistore] removed database %q", name)
+	return nil
+}
+
+// SetEntryEnabled toggles a secondary database on or off.
+// The primary database cannot be disabled.
+func (ms *MultiStore) SetEntryEnabled(name string, enabled bool) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	e, ok := ms.byName[name]
+	if !ok {
+		return fmt.Errorf("database %q not found", name)
+	}
+	if e == ms.primary && !enabled {
+		return fmt.Errorf("cannot disable the primary database")
+	}
+
+	e.Enabled = enabled
+	state := "enabled"
+	if !enabled {
+		state = "disabled"
+	}
+	log.Printf("[multistore] %s database %q", state, name)
+	return nil
 }

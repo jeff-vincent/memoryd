@@ -150,6 +150,17 @@
   .btn-sm.editing { background: var(--accent); color: #fff; border-color: var(--accent); }
   .btn-sm.delete:hover { border-color: var(--red); color: var(--red); }
   .knowledge-page { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; }
+
+  /* Toggle switch */
+  .toggle { position: relative; display: inline-block; width: 36px; height: 20px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 20px; transition: 0.2s; }
+  .toggle-slider::before { content: ''; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+  .toggle input:checked + .toggle-slider { background: var(--green); }
+  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+  .tag-primary { background: var(--accent-light); color: var(--accent); }
+  .tag-readonly { background: #f0f0f0; color: var(--text-secondary); }
+  .tag-disabled { background: var(--red-bg); color: var(--red); }
 </style>
 </head>
 <body>
@@ -192,6 +203,7 @@
       <div class="tabs">
         <div class="tab active" data-tab="knowledge">Knowledge base</div>
         <div class="tab" data-tab="sources">Knowledge sources</div>
+        <div class="tab" data-tab="databases">Team databases</div>
       </div>
 
       <div class="tab-content active" id="tab-knowledge">
@@ -248,6 +260,40 @@
           </thead>
           <tbody id="sourceRows">
             <tr><td colspan="6" class="empty-state">No sources ingested</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="tab-content" id="tab-databases">
+        <form class="add-source-form" id="addDbForm" autocomplete="off">
+          <div class="form-group name-field">
+            <label for="dbName">Name</label>
+            <input type="text" id="dbName" placeholder="e.g. Payments Team" required>
+          </div>
+          <div class="form-group url-field">
+            <label for="dbURI">Connection string</label>
+            <input type="text" id="dbURI" placeholder="mongodb+srv://..." required>
+          </div>
+          <div class="form-group name-field">
+            <label for="dbDatabase">Database</label>
+            <input type="text" id="dbDatabase" placeholder="e.g. payments" required>
+          </div>
+          <button type="submit" class="btn btn-primary" id="addDbBtn">Connect</button>
+        </form>
+        <div class="form-message" id="dbFormMessage" style="display:none"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Database</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Enabled</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="dbRows">
+            <tr><td colspan="6" class="empty-state">No team databases connected</td></tr>
           </tbody>
         </table>
       </div>
@@ -596,8 +642,121 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
 checkHealth();
 loadDashboard();
 loadKnowledge();
+loadDatabases();
 setInterval(checkHealth, 10000);
 setInterval(loadDashboard, 15000);
+setInterval(loadDatabases, 15000);
+
+// --- Team databases ---
+async function loadDatabases() {
+  try {
+    const r = await fetch(BASE + '/api/databases');
+    const dbs = await r.json();
+    const body = document.getElementById('dbRows');
+    if (!dbs || dbs.length === 0) {
+      body.innerHTML = '<tr><td colspan="6" class="empty-state">No team databases connected</td></tr>';
+      return;
+    }
+    body.innerHTML = dbs.map(db => {
+      const isPrimary = db.role === 'full';
+      const roleTag = isPrimary ? '<span class="tag tag-primary">primary</span>' : '<span class="tag tag-readonly">read-only</span>';
+      const statusTag = db.enabled ? '<span class="tag tag-ready">active</span>' : '<span class="tag tag-disabled">disabled</span>';
+      const toggle = isPrimary ? '' :
+        '<label class="toggle"><input type="checkbox" ' + (db.enabled ? 'checked' : '') +
+        ' onchange="toggleDb(\'' + esc(db.name) + '\', this.checked)"><span class="toggle-slider"></span></label>';
+      const remove = isPrimary ? '' :
+        '<button class="btn-sm delete" onclick="removeDb(\'' + esc(db.name) + '\')">Remove</button>';
+      return '<tr>' +
+        '<td style="font-weight:500">' + esc(db.name) + '</td>' +
+        '<td style="font-family:var(--mono);font-size:12px">' + esc(db.database) + '</td>' +
+        '<td>' + roleTag + '</td>' +
+        '<td>' + statusTag + '</td>' +
+        '<td>' + toggle + '</td>' +
+        '<td>' + remove + '</td>' +
+      '</tr>';
+    }).join('');
+  } catch(e) {
+    console.error('Load databases failed:', e);
+  }
+}
+
+async function toggleDb(name, enabled) {
+  try {
+    const r = await fetch(BASE + '/api/databases/' + encodeURIComponent(name), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled })
+    });
+    if (!r.ok) {
+      const j = await r.json();
+      alert('Toggle failed: ' + (j.error || 'Unknown error'));
+    }
+    loadDatabases();
+  } catch(e) {
+    alert('Toggle failed: ' + e.message);
+  }
+}
+
+async function removeDb(name) {
+  if (!confirm('Remove database "' + name + '"? This disconnects it but does not delete any data.')) return;
+  try {
+    const r = await fetch(BASE + '/api/databases/' + encodeURIComponent(name), { method: 'DELETE' });
+    if (!r.ok) {
+      const j = await r.json();
+      alert('Remove failed: ' + (j.error || 'Unknown error'));
+    }
+    loadDatabases();
+  } catch(e) {
+    alert('Remove failed: ' + e.message);
+  }
+}
+
+document.getElementById('addDbForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('addDbBtn');
+  const msg = document.getElementById('dbFormMessage');
+  const nameInput = document.getElementById('dbName');
+  const uriInput = document.getElementById('dbURI');
+  const dbInput = document.getElementById('dbDatabase');
+  const name = nameInput.value.trim();
+  const uri = uriInput.value.trim();
+  const database = dbInput.value.trim();
+  if (!name || !uri || !database) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  msg.style.display = 'none';
+
+  try {
+    const r = await fetch(BASE + '/api/databases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, uri, database })
+    });
+    const j = await r.json();
+    if (r.ok) {
+      msg.className = 'form-message success';
+      msg.textContent = j.message || 'Database connected.';
+      msg.style.display = 'block';
+      nameInput.value = '';
+      uriInput.value = '';
+      dbInput.value = '';
+      setTimeout(() => { msg.style.display = 'none'; }, 4000);
+      loadDatabases();
+    } else {
+      msg.className = 'form-message error';
+      msg.textContent = j.error || 'Failed to connect.';
+      msg.style.display = 'block';
+    }
+  } catch(err) {
+    msg.className = 'form-message error';
+    msg.textContent = 'Request failed: ' + err.message;
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+  }
+});
 </script>
 </body>
 </html>

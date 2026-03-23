@@ -96,10 +96,21 @@ func startCmd() *cobra.Command {
 
 			var entries []store.DatabaseEntry
 			for _, dbCfg := range databases {
+				if !dbCfg.IsEnabled() {
+					log.Printf("  [%s] skipped (disabled)", dbCfg.Name)
+					continue
+				}
+
+				// Use the database-specific URI if set, otherwise fall back to primary.
+				uri := dbCfg.URI
+				if uri == "" {
+					uri = cfg.MongoDBAtlasURI
+				}
+
 				var ms *store.MongoStore
 				var ss store.Store
 				if cfg.AtlasMode {
-					atlas, err := store.NewAtlasStore(ctx, cfg.MongoDBAtlasURI, dbCfg.Database)
+					atlas, err := store.NewAtlasStore(ctx, uri, dbCfg.Database)
 					if err != nil {
 						return fmt.Errorf("connecting to database %q: %w", dbCfg.Name, err)
 					}
@@ -107,7 +118,7 @@ func startCmd() *cobra.Command {
 					ss = atlas
 				} else {
 					var err error
-					ms, err = store.NewMongoStore(ctx, cfg.MongoDBAtlasURI, dbCfg.Database)
+					ms, err = store.NewMongoStore(ctx, uri, dbCfg.Database)
 					if err != nil {
 						return fmt.Errorf("connecting to database %q: %w", dbCfg.Name, err)
 					}
@@ -122,6 +133,7 @@ func startCmd() *cobra.Command {
 					Name:        dbCfg.Name,
 					Database:    dbCfg.Database,
 					Role:        role,
+					URI:         dbCfg.URI,
 					Store:       ms,
 					SearchStore: ss,
 					Mongo:       ms,

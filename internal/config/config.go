@@ -25,9 +25,16 @@ const (
 
 // DatabaseConfig describes a single team database connection.
 type DatabaseConfig struct {
-	Name     string `yaml:"name"`     // Human label (e.g., "platform", "payments")
-	Database string `yaml:"database"` // MongoDB database name
-	Role     string `yaml:"role"`     // "full" or "read-only"
+	Name     string `yaml:"name"`               // Human label (e.g., "platform", "payments")
+	Database string `yaml:"database"`           // MongoDB database name
+	Role     string `yaml:"role"`               // "full" or "read-only"
+	URI      string `yaml:"uri,omitempty"`      // Connection string (empty = use primary URI)
+	Enabled  *bool  `yaml:"enabled,omitempty"` // nil/true = enabled, false = disabled
+}
+
+// IsEnabled returns true if the database is active (nil defaults to true).
+func (dc DatabaseConfig) IsEnabled() bool {
+	return dc.Enabled == nil || *dc.Enabled
 }
 
 type Config struct {
@@ -206,6 +213,31 @@ func SetMode(mode string) error {
 	}
 
 	cfg.Mode = mode
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+
+	if err := EnsureDir(); err != nil {
+		return err
+	}
+	return os.WriteFile(Path(), out, 0600)
+}
+
+// SaveDatabases persists the secondary database list to the config file.
+func SaveDatabases(databases []DatabaseConfig) error {
+	cfg := Default
+	data, err := os.ReadFile(Path())
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading config: %w", err)
+	}
+	if err == nil {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("parsing config: %w", err)
+		}
+	}
+
+	cfg.Databases = databases
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
