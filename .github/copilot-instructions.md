@@ -12,7 +12,7 @@ Developer → Claude Code → memoryd (127.0.0.1:7432) → Anthropic API
                         MongoDB (Atlas or Local)
 ```
 
-Module: `github.com/kindling-sh/memoryd`
+Module: `github.com/memory-daemon/memoryd`
 Go version: 1.26+
 Config: `~/.memoryd/config.yaml`
 

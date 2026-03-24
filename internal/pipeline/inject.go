@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 const (

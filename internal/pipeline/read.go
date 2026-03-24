@@ -3,10 +3,10 @@ package pipeline
 import (
 	"context"
 
-	"github.com/kindling-sh/memoryd/internal/config"
-	"github.com/kindling-sh/memoryd/internal/embedding"
-	"github.com/kindling-sh/memoryd/internal/quality"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/embedding"
+	"github.com/memory-daemon/memoryd/internal/quality"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 // ReadPipeline handles the pre-prompt path: embed the user message,

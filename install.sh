@@ -4,10 +4,10 @@ set -euo pipefail
 # memoryd installer — one command to install and start everything.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/kindling-sh/memoryd/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/memory-daemon/memoryd/main/install.sh | bash
 #   curl -fsSL ... | bash -s -- --atlas "mongodb+srv://..."
 
-REPO="kindling-sh/memoryd"
+REPO="memory-daemon/memoryd"
 ATLAS_URI=""
 INSTALL_DIR="/usr/local/bin"
 

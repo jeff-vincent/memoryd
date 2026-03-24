@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 // ExportStore is the minimal store surface the exporter needs.

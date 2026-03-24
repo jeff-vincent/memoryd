@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kindling-sh/memoryd/internal/config"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 type mockEmbedder struct {

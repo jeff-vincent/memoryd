@@ -3,7 +3,7 @@
     "name": "codebase-convention-recall",
     "description": "Tests whether accumulated project context helps Claude follow established conventions when writing new code.",
     "seeds": [
-      "The memoryd project uses Go 1.26 with the module path github.com/kindling-sh/memoryd. All HTTP handlers follow the pattern: func handleFoo(w http.ResponseWriter, r *http.Request) with json.NewEncoder(w).Encode for responses.",
+      "The memoryd project uses Go 1.26 with the module path github.com/memory-daemon/memoryd. All HTTP handlers follow the pattern: func handleFoo(w http.ResponseWriter, r *http.Request) with json.NewEncoder(w).Encode for responses.",
       "Error responses in memoryd always use http.Error(w, message, code) — never custom error structs. All API endpoints are registered in registerAPI() inside internal/proxy/api.go.",
       "MongoDB queries in memoryd use the official go.mongodb.org/mongo-driver. The store layer is defined as an interface in internal/store/store.go with a MongoStore implementation in mongo.go. All methods take context.Context as the first arg.",
       "The project uses table-driven tests with t.Run() subtests. Test files colocate with source files. The test helper pattern is: func setupTest(t *testing.T) (*Store, func()) where the cleanup func drops the test database.",

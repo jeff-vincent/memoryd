@@ -7,11 +7,11 @@ import (
 	"log"
 	"strings"
 
-	"github.com/kindling-sh/memoryd/internal/chunker"
-	"github.com/kindling-sh/memoryd/internal/crawler"
-	"github.com/kindling-sh/memoryd/internal/embedding"
-	"github.com/kindling-sh/memoryd/internal/redact"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/chunker"
+	"github.com/memory-daemon/memoryd/internal/crawler"
+	"github.com/memory-daemon/memoryd/internal/embedding"
+	"github.com/memory-daemon/memoryd/internal/redact"
+	"github.com/memory-daemon/memoryd/internal/store"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )

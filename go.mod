@@ -1,4 +1,4 @@
-module github.com/kindling-sh/memoryd
+module github.com/memory-daemon/memoryd
 
 go 1.26
 

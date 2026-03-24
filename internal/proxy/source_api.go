@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kindling-sh/memoryd/internal/ingest"
-	"github.com/kindling-sh/memoryd/internal/quality"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/ingest"
+	"github.com/memory-daemon/memoryd/internal/quality"
+	"github.com/memory-daemon/memoryd/internal/store"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )

@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kindling-sh/memoryd/internal/quality"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/quality"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 //go:embed dashboard.html

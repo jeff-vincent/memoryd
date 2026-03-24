@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kindling-sh/memoryd/internal/config"
-	"github.com/kindling-sh/memoryd/internal/embedding"
-	"github.com/kindling-sh/memoryd/internal/pipeline"
-	"github.com/kindling-sh/memoryd/internal/redact"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/embedding"
+	"github.com/memory-daemon/memoryd/internal/pipeline"
+	"github.com/memory-daemon/memoryd/internal/redact"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 type apiHandler struct {

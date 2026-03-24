@@ -39,11 +39,11 @@ archives:
 brews:
   - name: memoryd
     repository:
-      owner: jeff-vincent
+      owner: memory-daemon
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
-    homepage: https://github.com/jeff-vincent/memoryd
+    homepage: https://github.com/memory-daemon/memoryd
     description: Persistent memory layer for coding agents
     license: MIT
     install: |
@@ -65,7 +65,7 @@ changelog:
 
 release:
   github:
-    owner: jeff-vincent
+    owner: memory-daemon
     name: memoryd
   draft: false
   prerelease: auto

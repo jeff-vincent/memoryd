@@ -7,9 +7,9 @@ const config = {
   title: 'memoryd',
   tagline: 'Shared knowledge for engineering teams — built automatically from the work you already do',
   favicon: 'img/favicon.ico',
-  url: 'https://jeff-vincent.github.io',
+  url: 'https://memory-daemon.github.io',
   baseUrl: '/memoryd/',
-  organizationName: 'jeff-vincent',
+  organizationName: 'memory-daemon',
   projectName: 'memoryd',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
@@ -31,7 +31,7 @@ const config = {
         docs: {
           routeBasePath: '/',
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/jeff-vincent/memoryd/tree/main/website/',
+          editUrl: 'https://github.com/memory-daemon/memoryd/tree/main/website/',
           remarkPlugins: [remarkMath],
           rehypePlugins: [rehypeKatex],
         },
@@ -54,7 +54,7 @@ const config = {
         title: 'memoryd',
         items: [
           { type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs' },
-          { href: 'https://github.com/jeff-vincent/memoryd', label: 'GitHub', position: 'right' },
+          { href: 'https://github.com/memory-daemon/memoryd', label: 'GitHub', position: 'right' },
         ],
       },
       footer: {

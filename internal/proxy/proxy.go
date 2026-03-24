@@ -5,12 +5,12 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/kindling-sh/memoryd/internal/config"
-	"github.com/kindling-sh/memoryd/internal/embedding"
-	"github.com/kindling-sh/memoryd/internal/ingest"
-	"github.com/kindling-sh/memoryd/internal/pipeline"
-	"github.com/kindling-sh/memoryd/internal/quality"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/embedding"
+	"github.com/memory-daemon/memoryd/internal/ingest"
+	"github.com/memory-daemon/memoryd/internal/pipeline"
+	"github.com/memory-daemon/memoryd/internal/quality"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 // Server is the memoryd HTTP proxy.

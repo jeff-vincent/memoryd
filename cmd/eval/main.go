@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/kindling-sh/memoryd/eval"
+	"github.com/memory-daemon/memoryd/eval"
 )
 
 func main() {

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/kindling-sh/memoryd/internal/chunker"
-	"github.com/kindling-sh/memoryd/internal/embedding"
-	"github.com/kindling-sh/memoryd/internal/redact"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/chunker"
+	"github.com/memory-daemon/memoryd/internal/embedding"
+	"github.com/memory-daemon/memoryd/internal/redact"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 // DedupThreshold is the cosine-similarity score above which a new chunk

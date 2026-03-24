@@ -15,7 +15,7 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/kindling-sh/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/config"
 )
 
 func main() {

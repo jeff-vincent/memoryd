@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kindling-sh/memoryd/internal/config"
-	"github.com/kindling-sh/memoryd/internal/pipeline"
+	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/pipeline"
 )
 
 func TestExtractLastUserMessage_StringContent(t *testing.T) {

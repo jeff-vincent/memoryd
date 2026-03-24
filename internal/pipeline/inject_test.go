@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 func TestFormatContext_Empty(t *testing.T) {

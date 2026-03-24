@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 // DefaultThreshold is the minimum number of retrieval events before

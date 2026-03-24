@@ -20,16 +20,16 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kindling-sh/memoryd/internal/config"
-	"github.com/kindling-sh/memoryd/internal/embedding"
-	"github.com/kindling-sh/memoryd/internal/export"
-	"github.com/kindling-sh/memoryd/internal/ingest"
-	"github.com/kindling-sh/memoryd/internal/mcp"
-	"github.com/kindling-sh/memoryd/internal/pipeline"
-	"github.com/kindling-sh/memoryd/internal/proxy"
-	"github.com/kindling-sh/memoryd/internal/quality"
-	"github.com/kindling-sh/memoryd/internal/steward"
-	"github.com/kindling-sh/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/embedding"
+	"github.com/memory-daemon/memoryd/internal/export"
+	"github.com/memory-daemon/memoryd/internal/ingest"
+	"github.com/memory-daemon/memoryd/internal/mcp"
+	"github.com/memory-daemon/memoryd/internal/pipeline"
+	"github.com/memory-daemon/memoryd/internal/proxy"
+	"github.com/memory-daemon/memoryd/internal/quality"
+	"github.com/memory-daemon/memoryd/internal/steward"
+	"github.com/memory-daemon/memoryd/internal/store"
 )
 
 var version = "dev"

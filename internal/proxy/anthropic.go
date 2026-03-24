@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kindling-sh/memoryd/internal/pipeline"
+	"github.com/memory-daemon/memoryd/internal/pipeline"
 )
 
 // anthropicHandler transparently proxies /v1/messages, capturing response
