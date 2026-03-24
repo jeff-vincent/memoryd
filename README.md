@@ -151,7 +151,7 @@ steward:
   interval_minutes: 60
   prune_threshold: 0.1
   merge_threshold: 0.88
-  decay_half_days: 7
+  decay_half_days: 90
 ```
 
 See the full **[Configuration Reference](https://memory-daemon.github.io/memoryd/configuration)**.

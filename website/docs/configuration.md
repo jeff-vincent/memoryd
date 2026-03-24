@@ -52,7 +52,7 @@ steward:
   interval_minutes: 60       # How often the quality sweep runs
   prune_threshold: 0.1       # Score below which low-value items are removed
   grace_period_hours: 24     # Minimum age before removal is considered
-  decay_half_days: 7         # How quickly unused knowledge loses relevance
+  decay_half_days: 90        # How quickly unused knowledge loses relevance
   merge_threshold: 0.88      # Similarity threshold for deduplication
   batch_size: 500            # Items processed per sweep
 ```
@@ -74,7 +74,7 @@ The defaults work well for most teams. If you need to adjust:
 | Scenario | What to change |
 |---|---|
 | **Large team (10+ contributors)** | Lower `interval_minutes` to 30, increase `batch_size` to 1000 |
-| **Want to retain knowledge longer** | Increase `decay_half_days` to 14–30 |
+| **Want to retain knowledge longer** | Increase `decay_half_days` beyond 90 |
 | **Seeing too many near-duplicates** | Lower `merge_threshold` to 0.85 |
 | **Want less aggressive cleanup** | Lower `prune_threshold` to 0.05, increase `grace_period_hours` to 72 |
 | **Heavy use of ingested sources** | Increase `batch_size` to 2000, lower `interval_minutes` to 30 |

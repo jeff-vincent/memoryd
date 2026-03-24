@@ -176,7 +176,7 @@ type Embedder interface {
 | `QualityLearningThreshold` | 50 | quality/ | Retrievals before quality filtering activates |
 | `PruneThreshold` | 0.1 | steward config | Score below which memories get pruned |
 | `PruneGracePeriod` | 24h | steward config | Minimum age before pruning eligible |
-| `DecayHalfLife` | 7d | steward config | Unretrieved memory score half-life |
+| `DecayHalfLife` | 90d | steward config | Unretrieved memory score half-life |
 | `MergeThreshold` | 0.88 | steward config | Similarity threshold for merge candidates |
 | `BatchSize` | 500 | steward config | Max memories scanned per steward sweep |
 
@@ -201,7 +201,7 @@ steward:
   interval_minutes: 60
   prune_threshold: 0.1
   grace_period_hours: 24
-  decay_half_days: 7
+  decay_half_days: 90
   merge_threshold: 0.88
   batch_size: 500
 ```

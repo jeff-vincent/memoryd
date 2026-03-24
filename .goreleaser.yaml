@@ -36,21 +36,6 @@ archives:
       - README.md
       - LICENSE*
 
-brews:
-  - name: memoryd
-    repository:
-      owner: memory-daemon
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    homepage: https://github.com/memory-daemon/memoryd
-    description: Persistent memory layer for coding agents
-    license: MIT
-    install: |
-      bin.install "memoryd"
-    test: |
-      system "#{bin}/memoryd", "version"
-
 checksum:
   name_template: checksums.txt
 

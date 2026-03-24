@@ -123,7 +123,7 @@ $$
 
 **Why logarithmic usage:** A memory retrieved 100 times isn't 100x more valuable than one retrieved once — but it's meaningfully more valuable. Log scaling captures this diminishing return while still rewarding consistent retrieval.
 
-**Why exponential decay with 7-day half-life:** Knowledge relevance fades quickly in active codebases. A debugging insight from yesterday is highly relevant; the same insight from two months ago may be outdated. The 7-day half-life means an unretrieved item loses half its score per week — aggressive enough to surface fresh knowledge, gentle enough that occasionally-useful items persist.
+**Why exponential decay with 90-day half-life:** Institutional knowledge stays relevant longer than you'd think — architecture decisions, debugging patterns, and deployment procedures are useful for months or quarters. The 90-day half-life means an unretrieved item loses half its score per quarter, preserving knowledge for intermittent tasks (quarterly reviews, seasonal deployments, periodic migrations) while still letting truly stale items fade.
 
 **Why a 50-event learning period:** The system needs enough data to distinguish signal from noise. With fewer than 50 retrieval events, quality scoring would be based on too small a sample — penalizing items that simply haven't had a chance to be retrieved yet.
 

@@ -378,7 +378,7 @@ echo "  Dashboard:     http://127.0.0.1:7432"
 echo "  Proxy mode:    export ANTHROPIC_BASE_URL=http://127.0.0.1:7432"
 echo "  MCP mode:      Already configured in ~/.mcp.json"
 echo ""
-if [[ "$OS" == "darwin" ]]; then
+if [[ "$OS" == "darwin" && -d "$APP_DIR/Memoryd.app" ]]; then
 echo "  The Memoryd menu bar app is running — look for M● in your menu bar."
 echo "  Use it to start/stop the daemon, switch modes, and manage sources."
 echo ""

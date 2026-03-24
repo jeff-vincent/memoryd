@@ -104,7 +104,7 @@ var Default = Config{
 		IntervalMinutes:  60,
 		PruneThreshold:   0.1,
 		GracePeriodHours: 24,
-		DecayHalfDays:    7,
+		DecayHalfDays:    90,
 		MergeThreshold:   0.88,
 		BatchSize:        500,
 	},

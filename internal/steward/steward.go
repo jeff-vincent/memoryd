@@ -23,7 +23,7 @@ type Config struct {
 	// Minimum age before a memory can be pruned (default 24h).
 	PruneGracePeriod time.Duration
 
-	// Score decay half-life: how long until an unretrieved memory loses half its score (default 7d).
+	// Score decay half-life: how long until an unretrieved memory loses half its score (default 90d).
 	DecayHalfLife time.Duration
 
 	// Cosine similarity above which two memories are candidates for merging (default 0.88).
@@ -39,7 +39,7 @@ func DefaultConfig() Config {
 		Interval:         1 * time.Hour,
 		PruneThreshold:   0.1,
 		PruneGracePeriod: 24 * time.Hour,
-		DecayHalfLife:    7 * 24 * time.Hour,
+		DecayHalfLife:    90 * 24 * time.Hour,
 		MergeThreshold:   0.88,
 		BatchSize:        500,
 	}

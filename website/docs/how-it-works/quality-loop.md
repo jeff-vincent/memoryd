@@ -26,7 +26,7 @@ Every 60 minutes (configurable), the steward runs a three-phase sweep:
 Every knowledge item gets a quality score based on two factors:
 
 - **Usage** — How often has this been retrieved? Items that are frequently surfaced in team members' sessions score higher.
-- **Recency** — How recently was this last useful? Unused knowledge decays over time (7-day half-life by default).
+- **Recency** — How recently was this last useful? Unused knowledge decays over time (90-day half-life by default).
 
 New items start with a neutral score and aren't penalized until they've had a chance to prove their value.
 
