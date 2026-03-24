@@ -44,14 +44,39 @@ fi
 if command -v llama-server &>/dev/null; then
   ok "llama-server installed"
 else
-  fail "llama-server not found"
   info "Installing llama.cpp..."
-  if command -v brew &>/dev/null; then
-    brew install llama.cpp
-    ok "llama.cpp installed"
+  if command -v brew &>/dev/null && brew install llama.cpp 2>/dev/null; then
+    ok "llama.cpp installed via Homebrew"
   else
-    fail "Homebrew not found. Install llama.cpp manually: https://github.com/ggerganov/llama.cpp"
-    exit 1
+    info "Homebrew install failed or unavailable, downloading from GitHub..."
+    OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    ARCH_NAME="$(uname -m)"
+    LLAMA_REPO="ggerganov/llama.cpp"
+    LLAMA_TAG=$(curl -fsSL "https://api.github.com/repos/$LLAMA_REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+    if [[ -z "$LLAMA_TAG" ]]; then
+      fail "Could not determine latest llama.cpp release"
+      exit 1
+    fi
+    if [[ "$OS_NAME" == "darwin" ]]; then
+      LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.zip"
+      [[ "$ARCH_NAME" == "x86_64" ]] && LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-x64.zip"
+    else
+      LLAMA_ASSET="llama-${LLAMA_TAG}-bin-ubuntu-x64.zip"
+      [[ "$ARCH_NAME" == "aarch64" || "$ARCH_NAME" == "arm64" ]] && LLAMA_ASSET="llama-${LLAMA_TAG}-bin-ubuntu-arm64.zip"
+    fi
+    LLAMA_TMPDIR=$(mktemp -d)
+    curl -fL --progress-bar -o "$LLAMA_TMPDIR/$LLAMA_ASSET" "https://github.com/$LLAMA_REPO/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
+    unzip -q "$LLAMA_TMPDIR/$LLAMA_ASSET" -d "$LLAMA_TMPDIR/llama"
+    LLAMA_SERVER=$(find "$LLAMA_TMPDIR/llama" -name "llama-server" -type f | head -1)
+    if [[ -z "$LLAMA_SERVER" ]]; then
+      fail "llama-server not found in release archive"
+      rm -rf "$LLAMA_TMPDIR"
+      exit 1
+    fi
+    chmod +x "$LLAMA_SERVER"
+    sudo cp "$LLAMA_SERVER" /usr/local/bin/llama-server
+    rm -rf "$LLAMA_TMPDIR"
+    ok "llama-server → /usr/local/bin/llama-server"
   fi
 fi
 

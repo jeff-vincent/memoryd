@@ -64,17 +64,55 @@ ok "Download tool available"
 if command -v llama-server &>/dev/null; then
   ok "llama-server installed"
 else
-  fail "llama-server not found"
-  if [[ "$OS" == "darwin" ]] && command -v brew &>/dev/null; then
-    info "Installing llama.cpp via Homebrew..."
-    brew install llama.cpp
-    ok "llama.cpp installed"
-  else
-    info "Install llama.cpp: https://github.com/ggerganov/llama.cpp"
-    info "  macOS: brew install llama.cpp"
-    info "  Linux: build from source or use your package manager"
+  info "Installing llama.cpp from GitHub release..."
+  LLAMA_REPO="ggerganov/llama.cpp"
+  LLAMA_TAG=$($DOWNLOAD_QUIET "https://api.github.com/repos/$LLAMA_REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
+  if [[ -z "$LLAMA_TAG" ]]; then
+    fail "Could not determine latest llama.cpp release"
     exit 1
   fi
+  info "Latest llama.cpp release: $LLAMA_TAG"
+
+  if [[ "$OS" == "darwin" ]]; then
+    LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.zip"
+    if [[ "$ARCH" == "amd64" ]]; then
+      LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-x64.zip"
+    fi
+  elif [[ "$OS" == "linux" ]]; then
+    LLAMA_ASSET="llama-${LLAMA_TAG}-bin-ubuntu-x64.zip"
+    if [[ "$ARCH" == "arm64" ]]; then
+      LLAMA_ASSET="llama-${LLAMA_TAG}-bin-ubuntu-arm64.zip"
+    fi
+  else
+    fail "No prebuilt llama.cpp for $OS/$ARCH"
+    exit 1
+  fi
+
+  LLAMA_URL="https://github.com/$LLAMA_REPO/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
+  LLAMA_TMPDIR=$(mktemp -d)
+  if ! $DOWNLOAD_PROGRESS -o "$LLAMA_TMPDIR/$LLAMA_ASSET" "$LLAMA_URL" 2>&1; then
+    fail "Could not download llama.cpp — try: brew install llama.cpp"
+    rm -rf "$LLAMA_TMPDIR"
+    exit 1
+  fi
+  unzip -q "$LLAMA_TMPDIR/$LLAMA_ASSET" -d "$LLAMA_TMPDIR/llama"
+
+  # Find llama-server in the extracted archive.
+  LLAMA_SERVER=$(find "$LLAMA_TMPDIR/llama" -name "llama-server" -type f | head -1)
+  if [[ -z "$LLAMA_SERVER" ]]; then
+    fail "llama-server not found in release archive"
+    rm -rf "$LLAMA_TMPDIR"
+    exit 1
+  fi
+
+  chmod +x "$LLAMA_SERVER"
+  if [[ -w "$INSTALL_DIR" ]]; then
+    cp "$LLAMA_SERVER" "$INSTALL_DIR/llama-server"
+  else
+    sudo cp "$LLAMA_SERVER" "$INSTALL_DIR/llama-server"
+  fi
+  rm -rf "$LLAMA_TMPDIR"
+  ok "llama-server → $INSTALL_DIR/llama-server"
 fi
 
 # Docker (only if no Atlas URI)
