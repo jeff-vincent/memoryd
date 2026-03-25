@@ -110,6 +110,8 @@ else
     sudo cp "$LLAMA_SERVER" "$INSTALL_DIR/llama-server"
   fi
   rm -rf "$LLAMA_TMPDIR"
+  # Strip macOS quarantine attribute so unsigned binary isn't killed.
+  [[ "$OS" == "darwin" ]] && xattr -d com.apple.quarantine "$INSTALL_DIR/llama-server" 2>/dev/null || true
   ok "llama-server → $INSTALL_DIR/llama-server"
 fi
 
@@ -175,6 +177,8 @@ else
 fi
 
 MEMORYD_BIN="$INSTALL_DIR/memoryd"
+# Strip macOS quarantine attribute so unsigned binary isn't killed.
+[[ "$OS" == "darwin" ]] && xattr -d com.apple.quarantine "$MEMORYD_BIN" 2>/dev/null || true
 ok "memoryd binary → $MEMORYD_BIN"
 
 # Install macOS menu bar app (separate release asset).
@@ -189,6 +193,8 @@ if [[ "$OS" == "darwin" ]]; then
     sleep 0.5
     rm -rf "$APP_DIR/Memoryd.app"
     unzip -q "$APP_TMPDIR/$APP_ZIP_NAME" -d "$APP_DIR"
+    # Strip macOS quarantine attribute from the entire .app bundle.
+    xattr -dr com.apple.quarantine "$APP_DIR/Memoryd.app" 2>/dev/null || true
     ok "Memoryd.app → $APP_DIR/Memoryd.app"
   else
     info "Memoryd.app not available for $ARCH — menu bar app skipped"
@@ -364,6 +370,83 @@ with open('$CLAUDE_CONFIG', 'w') as f:
     json.dump(cfg, f, indent=2)
 " 2>/dev/null && ok "Added memoryd to Claude Desktop config" || info "Could not update Claude Desktop config — add manually"
     fi
+  fi
+fi
+
+# ── Cursor MCP ─────────────────────────────────────────────────────
+
+CURSOR_MCP="$HOME/.cursor/mcp.json"
+
+if [[ -d "$HOME/.cursor" ]]; then
+  step "Cursor MCP"
+  if [[ -f "$CURSOR_MCP" ]]; then
+    if grep -q '"memoryd"' "$CURSOR_MCP" 2>/dev/null; then
+      ok "memoryd already in Cursor config"
+    else
+      info "Adding memoryd to Cursor config"
+      python3 -c "
+import json
+with open('$CURSOR_MCP') as f:
+    cfg = json.load(f)
+cfg.setdefault('mcpServers', {})['memoryd'] = {
+    'command': '$MEMORYD_BIN',
+    'args': ['mcp']
+}
+with open('$CURSOR_MCP', 'w') as f:
+    json.dump(cfg, f, indent=2)
+" 2>/dev/null && ok "Added memoryd to Cursor config" || info "Could not update Cursor config — add manually"
+    fi
+  else
+    cat > "$CURSOR_MCP" << EOF
+{
+  "mcpServers": {
+    "memoryd": {
+      "command": "$MEMORYD_BIN",
+      "args": ["mcp"]
+    }
+  }
+}
+EOF
+    ok "Created $CURSOR_MCP with memoryd MCP server"
+  fi
+fi
+
+# ── Windsurf MCP ───────────────────────────────────────────────────
+
+WINDSURF_DIR="$HOME/.codeium/windsurf"
+WINDSURF_MCP="$WINDSURF_DIR/mcp_config.json"
+
+if [[ -d "$WINDSURF_DIR" ]]; then
+  step "Windsurf MCP"
+  if [[ -f "$WINDSURF_MCP" ]]; then
+    if grep -q '"memoryd"' "$WINDSURF_MCP" 2>/dev/null; then
+      ok "memoryd already in Windsurf config"
+    else
+      info "Adding memoryd to Windsurf config"
+      python3 -c "
+import json
+with open('$WINDSURF_MCP') as f:
+    cfg = json.load(f)
+cfg.setdefault('mcpServers', {})['memoryd'] = {
+    'command': '$MEMORYD_BIN',
+    'args': ['mcp']
+}
+with open('$WINDSURF_MCP', 'w') as f:
+    json.dump(cfg, f, indent=2)
+" 2>/dev/null && ok "Added memoryd to Windsurf config" || info "Could not update Windsurf config — add manually"
+    fi
+  else
+    cat > "$WINDSURF_MCP" << EOF
+{
+  "mcpServers": {
+    "memoryd": {
+      "command": "$MEMORYD_BIN",
+      "args": ["mcp"]
+    }
+  }
+}
+EOF
+    ok "Created $WINDSURF_MCP with memoryd MCP server"
   fi
 fi
 

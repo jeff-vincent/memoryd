@@ -355,7 +355,7 @@ func switchMode(mode string, proxy, mcp, mcpRO *systray.MenuItem, binaryPath str
 func uninstallDialog(binaryPath string) {
 	// Confirm.
 	_, err := exec.Command("osascript", "-e",
-		`display dialog "This will stop the daemon and remove:\n\n• memoryd binary\n• ~/.memoryd (config, models, logs)\n• Docker container (memoryd-mongo)\n• Claude Desktop MCP entry\n\nThis cannot be undone." buttons {"Cancel", "Uninstall"} default button "Cancel" with icon caution with title "Uninstall memoryd"`, "-e",
+		`display dialog "This will stop the daemon and remove:\n\n• memoryd binary & llama-server\n• Memoryd.app\n• ~/.memoryd (config, models, logs)\n• Docker container (memoryd-mongo)\n• MCP config entries (Claude Code, Claude Desktop, Cursor, Windsurf)\n\nThis cannot be undone." buttons {"Cancel", "Uninstall"} default button "Cancel" with icon caution with title "Uninstall memoryd"`, "-e",
 		`button returned of result`).Output()
 	if err != nil {
 		return // user cancelled
@@ -364,15 +364,30 @@ func uninstallDialog(binaryPath string) {
 	// 1. Stop daemon.
 	stopDaemon()
 
+	// 2. Kill llama-server (embedding subprocess).
+	exec.Command("pkill", "-f", "llama-server").Run()
+
 	var removed []string
 	var failed []string
 
-	// 2. Remove Claude Desktop MCP config entry.
-	if cleanClaudeDesktopConfig() {
-		removed = append(removed, "Claude Desktop MCP config")
+	// 3. Remove MCP config entries from all known agents.
+	home, _ := os.UserHomeDir()
+	agentConfigs := []struct {
+		name string
+		path string
+	}{
+		{"Claude Code", filepath.Join(home, ".mcp.json")},
+		{"Claude Desktop", filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")},
+		{"Cursor", filepath.Join(home, ".cursor", "mcp.json")},
+		{"Windsurf", filepath.Join(home, ".codeium", "windsurf", "mcp_config.json")},
+	}
+	for _, ac := range agentConfigs {
+		if cleanMCPConfig(ac.path) {
+			removed = append(removed, ac.name+" MCP config")
+		}
 	}
 
-	// 3. Stop and remove Docker container.
+	// 5. Stop and remove Docker container.
 	if containerExists("memoryd-mongo") {
 		exec.Command("docker", "stop", "memoryd-mongo").Run()
 		if exec.Command("docker", "rm", "memoryd-mongo").Run() == nil {
@@ -382,7 +397,7 @@ func uninstallDialog(binaryPath string) {
 		}
 	}
 
-	// 4. Remove ~/.memoryd.
+	// 6. Remove ~/.memoryd.
 	memorydDir := config.Dir()
 	if _, err := os.Stat(memorydDir); err == nil {
 		if os.RemoveAll(memorydDir) == nil {
@@ -392,12 +407,21 @@ func uninstallDialog(binaryPath string) {
 		}
 	}
 
-	// 5. Remove binary.
+	// 7. Remove Memoryd.app.
+	appPath := "/Applications/Memoryd.app"
+	if _, err := os.Stat(appPath); err == nil {
+		if os.RemoveAll(appPath) == nil {
+			removed = append(removed, "Memoryd.app")
+		} else {
+			failed = append(failed, "Memoryd.app (remove manually)")
+		}
+	}
+
+	// 8. Remove binaries.
 	if binaryPath != "" && binaryPath != "memoryd" {
 		if os.Remove(binaryPath) == nil {
 			removed = append(removed, "memoryd binary")
 		} else {
-			// May need sudo — try.
 			if exec.Command("sudo", "rm", "-f", binaryPath).Run() == nil {
 				removed = append(removed, "memoryd binary")
 			} else {
@@ -406,7 +430,20 @@ func uninstallDialog(binaryPath string) {
 		}
 	}
 
-	// 6. Show result.
+	// Remove llama-server if we installed it.
+	llamaPath := filepath.Join(filepath.Dir(binaryPath), "llama-server")
+	if binaryPath != "" && binaryPath != "memoryd" {
+		if _, err := os.Stat(llamaPath); err == nil {
+			if os.Remove(llamaPath) == nil {
+				removed = append(removed, "llama-server binary")
+			} else {
+				exec.Command("sudo", "rm", "-f", llamaPath).Run()
+				removed = append(removed, "llama-server binary")
+			}
+		}
+	}
+
+	// 9. Show result.
 	msg := "memoryd has been uninstalled."
 	if len(removed) > 0 {
 		msg += "\n\nRemoved:\n• " + strings.Join(removed, "\n• ")
@@ -422,11 +459,9 @@ func uninstallDialog(binaryPath string) {
 	systray.Quit()
 }
 
-// cleanClaudeDesktopConfig removes the memoryd entry from Claude Desktop's config.
-func cleanClaudeDesktopConfig() bool {
-	home, _ := os.UserHomeDir()
-	configPath := filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
-
+// cleanMCPConfig removes the memoryd entry from an MCP config file.
+// Works with any agent that uses the standard {"mcpServers": {...}} format.
+func cleanMCPConfig(configPath string) bool {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return false
