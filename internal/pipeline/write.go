@@ -9,6 +9,7 @@ import (
 
 	"github.com/memory-daemon/memoryd/internal/chunker"
 	"github.com/memory-daemon/memoryd/internal/embedding"
+	"github.com/memory-daemon/memoryd/internal/quality"
 	"github.com/memory-daemon/memoryd/internal/redact"
 	"github.com/memory-daemon/memoryd/internal/store"
 )
@@ -57,10 +58,23 @@ func (r WriteResult) Summary() string {
 type WritePipeline struct {
 	embedder embedding.Embedder
 	store    store.Store
+	scorer   *quality.ContentScorer
 }
 
-func NewWritePipeline(e embedding.Embedder, s store.Store) *WritePipeline {
-	return &WritePipeline{embedder: e, store: s}
+// WriteOption configures the WritePipeline.
+type WriteOption func(*WritePipeline)
+
+// WithContentScorer attaches a content scorer to the write pipeline.
+func WithContentScorer(cs *quality.ContentScorer) WriteOption {
+	return func(wp *WritePipeline) { wp.scorer = cs }
+}
+
+func NewWritePipeline(e embedding.Embedder, s store.Store, opts ...WriteOption) *WritePipeline {
+	wp := &WritePipeline{embedder: e, store: s}
+	for _, o := range opts {
+		o(wp)
+	}
+	return wp
 }
 
 // Process chunks, embeds, deduplicates, and stores the text.
@@ -135,10 +149,11 @@ func (wp *WritePipeline) ProcessFiltered(text, source string, metadata map[strin
 		}
 
 		mem := store.Memory{
-			Content:   chunk,
-			Embedding: vec,
-			Source:    source,
-			Metadata:  chunkMeta,
+			Content:      chunk,
+			Embedding:    vec,
+			Source:       source,
+			Metadata:     chunkMeta,
+			ContentScore: wp.scorer.Score(vec),
 		}
 
 		if err := wp.store.Insert(ctx, mem); err != nil {

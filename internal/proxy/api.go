@@ -80,13 +80,17 @@ func (a *apiHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	retrieved, err := a.read.Retrieve(ctx, req.Query)
+	retrieved, memories, err := a.read.RetrieveWithScores(ctx, req.Query)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
 
-	writeJSON(w, 200, map[string]string{"context": retrieved})
+	scores := make([]float64, len(memories))
+	for i, m := range memories {
+		scores[i] = m.Score
+	}
+	writeJSON(w, 200, map[string]any{"context": retrieved, "scores": scores})
 }
 
 func (a *apiHandler) handleStore(w http.ResponseWriter, r *http.Request) {

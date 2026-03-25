@@ -24,10 +24,11 @@ type Scenario struct {
 }
 
 type RunResult struct {
-	Condition string        `json:"condition"`
-	Response  string        `json:"response"`
-	Latency   time.Duration `json:"latency_ms"`
-	Context   string        `json:"context,omitempty"`
+	Condition       string    `json:"condition"`
+	Response        string    `json:"response"`
+	Latency         time.Duration `json:"latency_ms"`
+	Context         string    `json:"context,omitempty"`
+	RetrievalScores []float64 `json:"retrieval_scores,omitempty"`
 }
 
 type JudgeScore struct {
@@ -169,22 +170,23 @@ func (h *Harness) clearMemories(ctx context.Context) error {
 	return nil
 }
 
-func (h *Harness) retrieveContext(ctx context.Context, query string) (string, error) {
+func (h *Harness) retrieveContext(ctx context.Context, query string) (string, []float64, error) {
 	body, _ := json.Marshal(map[string]string{"query": query})
 	req, _ := http.NewRequestWithContext(ctx, "POST", h.cfg.MemorydURL+"/api/search", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 	var result struct {
-		Context string `json:"context"`
+		Context string    `json:"context"`
+		Scores  []float64 `json:"scores"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return result.Context, nil
+	return result.Context, result.Scores, nil
 }
 
 func (h *Harness) callClaude(ctx context.Context, system, user string) (string, time.Duration, error) {
@@ -237,7 +239,7 @@ func (h *Harness) runBare(ctx context.Context, sc Scenario) (*RunResult, error) 
 }
 
 func (h *Harness) runAugmented(ctx context.Context, sc Scenario) (*RunResult, error) {
-	retrieved, err := h.retrieveContext(ctx, sc.Prompt)
+	retrieved, scores, err := h.retrieveContext(ctx, sc.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("retrieve: %w", err)
 	}
@@ -249,7 +251,7 @@ func (h *Harness) runAugmented(ctx context.Context, sc Scenario) (*RunResult, er
 	if err != nil {
 		return nil, err
 	}
-	return &RunResult{Condition: "augmented", Response: text, Latency: latency, Context: retrieved}, nil
+	return &RunResult{Condition: "augmented", Response: text, Latency: latency, Context: retrieved, RetrievalScores: scores}, nil
 }
 
 func (h *Harness) judge(ctx context.Context, sc Scenario, bare, aug *RunResult) ([]JudgeScore, error) {

@@ -18,6 +18,7 @@ type Memory struct {
 	Score         float64            `bson:"score,omitempty" json:"score,omitempty"`
 	HitCount      int                `bson:"hit_count,omitempty" json:"hit_count,omitempty"`
 	QualityScore  float64            `bson:"quality_score,omitempty" json:"quality_score,omitempty"`
+	ContentScore  float64            `bson:"content_score,omitempty" json:"content_score,omitempty"`
 	LastRetrieved time.Time          `bson:"last_retrieved,omitempty" json:"last_retrieved,omitempty"`
 }
 

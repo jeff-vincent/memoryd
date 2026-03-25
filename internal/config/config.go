@@ -25,10 +25,10 @@ const (
 
 // DatabaseConfig describes a single team database connection.
 type DatabaseConfig struct {
-	Name     string `yaml:"name"`               // Human label (e.g., "platform", "payments")
-	Database string `yaml:"database"`           // MongoDB database name
-	Role     string `yaml:"role"`               // "full" or "read-only"
-	URI      string `yaml:"uri,omitempty"`      // Connection string (empty = use primary URI)
+	Name     string `yaml:"name"`              // Human label (e.g., "platform", "payments")
+	Database string `yaml:"database"`          // MongoDB database name
+	Role     string `yaml:"role"`              // "full" or "read-only"
+	URI      string `yaml:"uri,omitempty"`     // Connection string (empty = use primary URI)
 	Enabled  *bool  `yaml:"enabled,omitempty"` // nil/true = enabled, false = disabled
 }
 

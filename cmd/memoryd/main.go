@@ -74,6 +74,8 @@ func startCmd() *cobra.Command {
 				return err
 			}
 
+			registerMCPServers()
+
 			if cfg.MongoDBAtlasURI == "" {
 				return fmt.Errorf("mongodb_atlas_uri is required -- edit %s", config.Path())
 			}
@@ -161,7 +163,12 @@ func startCmd() *cobra.Command {
 			// Write pipeline uses primary store (default write target).
 			qt := quality.NewTracker(primary.Mongo, quality.DefaultThreshold)
 			read := pipeline.NewReadPipeline(emb, multi, cfg, pipeline.WithQualityTracker(qt))
-			write := pipeline.NewWritePipeline(emb, primary.Store)
+
+			scorer, err := quality.NewContentScorer(ctx, emb)
+			if err != nil {
+				log.Printf("warning: content scorer unavailable, chunks will not be quality-scored: %v", err)
+			}
+			write := pipeline.NewWritePipeline(emb, primary.Store, pipeline.WithContentScorer(scorer))
 
 			// 4. Build ingester (operates on primary database)
 			ing := ingest.NewIngester(emb, primary.Mongo, primary.Mongo)

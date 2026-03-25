@@ -13,54 +13,6 @@ import (
 	"github.com/memory-daemon/memoryd/internal/pipeline"
 )
 
-func TestExtractLastUserMessage_StringContent(t *testing.T) {
-	raw := json.RawMessage(`[{"role":"user","content":"hello world"}]`)
-	got := extractLastUserMessageRaw(raw)
-	if got != "hello world" {
-		t.Errorf("got %q, want hello world", got)
-	}
-}
-
-func TestExtractLastUserMessage_ArrayContent(t *testing.T) {
-	raw := json.RawMessage(`[{"role":"user","content":[{"type":"text","text":"first part"},{"type":"text","text":"second part"}]}]`)
-	got := extractLastUserMessageRaw(raw)
-	want := "first part\nsecond part"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestExtractLastUserMessage_MultipleMessages(t *testing.T) {
-	raw := json.RawMessage(`[{"role":"user","content":"first"},{"role":"assistant","content":"response"},{"role":"user","content":"most recent"}]`)
-	got := extractLastUserMessageRaw(raw)
-	if got != "most recent" {
-		t.Errorf("got %q, want most recent", got)
-	}
-}
-
-func TestExtractLastUserMessage_NoMessages(t *testing.T) {
-	got := extractLastUserMessageRaw(nil)
-	if got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
-func TestExtractLastUserMessage_EmptyMessages(t *testing.T) {
-	raw := json.RawMessage(`[]`)
-	got := extractLastUserMessageRaw(raw)
-	if got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
-func TestExtractLastUserMessage_OnlyAssistant(t *testing.T) {
-	raw := json.RawMessage(`[{"role":"assistant","content":"hello"}]`)
-	got := extractLastUserMessageRaw(raw)
-	if got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
 func TestExtractResponseText_ValidResponse(t *testing.T) {
 	resp := map[string]any{
 		"content": []any{

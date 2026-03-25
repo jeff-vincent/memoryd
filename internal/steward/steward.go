@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/memory-daemon/memoryd/internal/quality"
 	"github.com/memory-daemon/memoryd/internal/store"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -220,12 +221,19 @@ func (s *Steward) scoreMemories(ctx context.Context) (int, error) {
 		}
 
 		// Decay factor based on time since last useful retrieval.
+		// Content score scales the effective half-life: low-quality chunks
+		// decay faster. Existing memories with no content_score (zero value)
+		// keep the full half-life so they aren't retroactively penalised.
 		lastActive := m.LastRetrieved
 		if lastActive.IsZero() {
 			lastActive = m.CreatedAt
 		}
 		elapsed := now.Sub(lastActive)
-		decayFactor := math.Pow(0.5, float64(elapsed)/float64(s.cfg.DecayHalfLife))
+		halfLife := float64(s.cfg.DecayHalfLife)
+		if m.ContentScore > 0 {
+			halfLife = quality.ContentScaleHalfLife(halfLife, m.ContentScore)
+		}
+		decayFactor := math.Pow(0.5, float64(elapsed)/halfLife)
 
 		score := baseScore * decayFactor
 

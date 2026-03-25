@@ -8,3 +8,4 @@ models/*.gguf
 website/node_modules/
 website/build/
 website/.docusaurus/
+eval-bin

@@ -48,13 +48,6 @@ func (h *anthropicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Ingest user message (async) ---
-	if h.writeEnabled {
-		if userMsg := extractLastUserMessageRaw(rawReq["messages"]); userMsg != "" {
-			go h.write.Process(userMsg, "claude-code-user", nil)
-		}
-	}
-
 	// --- Forward to Anthropic unchanged ---
 	upReq, err := http.NewRequestWithContext(r.Context(), "POST",
 		h.upstreamURL+"/v1/messages", bytes.NewReader(body))
@@ -178,50 +171,6 @@ func copyHeaders(dst, src http.Header) {
 			dst.Add(k, v)
 		}
 	}
-}
-
-// extractLastUserMessageRaw walks the messages array backwards to find the last
-// user turn and returns its text content. Works on raw JSON to avoid full
-// body deserialization.
-func extractLastUserMessageRaw(messagesRaw json.RawMessage) string {
-	if messagesRaw == nil {
-		return ""
-	}
-	type msgEntry struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	}
-	var messages []msgEntry
-	if err := json.Unmarshal(messagesRaw, &messages); err != nil {
-		return ""
-	}
-
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != "user" {
-			continue
-		}
-		// Try as plain string
-		var s string
-		if err := json.Unmarshal(messages[i].Content, &s); err == nil {
-			return s
-		}
-		// Try as array of content blocks
-		type textBlock struct {
-			Text string `json:"text"`
-		}
-		var blocks []textBlock
-		if err := json.Unmarshal(messages[i].Content, &blocks); err == nil {
-			var parts []string
-			for _, b := range blocks {
-				if b.Text != "" {
-					parts = append(parts, b.Text)
-				}
-			}
-			return strings.Join(parts, "\n")
-		}
-		break
-	}
-	return ""
 }
 
 // extractResponseText pulls the assistant text from a non-streaming response.

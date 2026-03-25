@@ -37,13 +37,33 @@ func NewReadPipeline(e embedding.Embedder, s store.Store, cfg *config.Config, op
 // Retrieve returns formatted context ready for system prompt injection,
 // or an empty string if nothing relevant is found.
 func (rp *ReadPipeline) Retrieve(ctx context.Context, userMessage string) (string, error) {
+	memories, err := rp.search(ctx, userMessage)
+	if err != nil {
+		return "", err
+	}
+	return FormatContext(memories, rp.cfg.RetrievalMaxTokens), nil
+}
+
+// RetrieveWithScores is like Retrieve but also returns the raw memories so
+// callers can inspect retrieval scores for instrumentation and eval.
+func (rp *ReadPipeline) RetrieveWithScores(ctx context.Context, userMessage string) (string, []store.Memory, error) {
+	memories, err := rp.search(ctx, userMessage)
+	if err != nil {
+		return "", nil, err
+	}
+	return FormatContext(memories, rp.cfg.RetrievalMaxTokens), memories, nil
+}
+
+// search embeds the query, runs the appropriate search, records quality hits,
+// and returns the raw memories with their scores populated.
+func (rp *ReadPipeline) search(ctx context.Context, userMessage string) ([]store.Memory, error) {
 	if rp.embedder == nil || rp.store == nil {
-		return "", nil
+		return nil, nil
 	}
 
 	vec, err := rp.embedder.Embed(ctx, userMessage)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var memories []store.Memory
@@ -60,7 +80,7 @@ func (rp *ReadPipeline) Retrieve(ctx context.Context, userMessage string) (strin
 		memories, err = rp.store.VectorSearch(ctx, vec, rp.cfg.RetrievalTopK)
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Record retrieval hits for quality learning.
@@ -68,5 +88,5 @@ func (rp *ReadPipeline) Retrieve(ctx context.Context, userMessage string) (strin
 		go rp.quality.RecordHits(context.Background(), memories)
 	}
 
-	return FormatContext(memories, rp.cfg.RetrievalMaxTokens), nil
+	return memories, nil
 }

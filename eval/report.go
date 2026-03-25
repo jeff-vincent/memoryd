@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -30,6 +31,22 @@ func Report(w io.Writer, results []ScenarioResult) {
 			fmt.Fprintf(w, "      %s\n", s.Explanation)
 		}
 
+		if len(r.Augmented.RetrievalScores) > 0 {
+			min, max, avg := scoreStats(r.Augmented.RetrievalScores)
+			fmt.Fprintf(w, "\n  retrieval: n=%d  min=%.3f  max=%.3f  avg=%.3f",
+				len(r.Augmented.RetrievalScores), min, max, avg)
+			if r.Delta > 0 {
+				fmt.Fprintf(w, "  → helped")
+			} else if r.Delta < 0 {
+				fmt.Fprintf(w, "  → hurt")
+			} else {
+				fmt.Fprintf(w, "  → neutral")
+			}
+			fmt.Fprintf(w, "\n")
+		} else {
+			fmt.Fprintf(w, "\n  retrieval: no scores recorded\n")
+		}
+
 		fmt.Fprintf(w, "\n  TOTAL: bare=%d  aug=%d  delta=%+d\n\n", r.BareTotal, r.AugTotal, r.Delta)
 
 		totalBare += r.BareTotal
@@ -46,7 +63,69 @@ func Report(w io.Writer, results []ScenarioResult) {
 		pct := float64(totalAug-totalBare) / float64(totalBare) * 100
 		fmt.Fprintf(w, "    Improvement:     %.1f%%\n", pct)
 	}
+
+	// Score-vs-delta breakdown: bucket by avg retrieval score, show avg delta per bucket.
+	fmt.Fprintf(w, "\n  Retrieval score vs quality delta:\n")
+	type bucket struct {
+		count    int
+		deltaSum int
+	}
+	buckets := map[string]*bucket{
+		"<0.50": {},
+		"0.50-0.60": {},
+		"0.60-0.70": {},
+		"0.70-0.80": {},
+		">=0.80": {},
+	}
+	bucketOrder := []string{"<0.50", "0.50-0.60", "0.60-0.70", "0.70-0.80", ">=0.80"}
+	for _, r := range results {
+		if len(r.Augmented.RetrievalScores) == 0 {
+			continue
+		}
+		_, _, avg := scoreStats(r.Augmented.RetrievalScores)
+		var key string
+		switch {
+		case avg < 0.50:
+			key = "<0.50"
+		case avg < 0.60:
+			key = "0.50-0.60"
+		case avg < 0.70:
+			key = "0.60-0.70"
+		case avg < 0.80:
+			key = "0.70-0.80"
+		default:
+			key = ">=0.80"
+		}
+		buckets[key].count++
+		buckets[key].deltaSum += r.Delta
+	}
+	for _, k := range bucketOrder {
+		b := buckets[k]
+		if b.count == 0 {
+			continue
+		}
+		avgDelta := float64(b.deltaSum) / float64(b.count)
+		fmt.Fprintf(w, "    avg score %-12s  n=%d  avg delta=%+.2f\n", k, b.count, avgDelta)
+	}
+
 	fmt.Fprintf(w, "%s\n\n", strings.Repeat("=", 72))
+}
+
+func scoreStats(scores []float64) (min, max, avg float64) {
+	min = math.MaxFloat64
+	max = -math.MaxFloat64
+	var sum float64
+	for _, s := range scores {
+		if s < min {
+			min = s
+		}
+		if s > max {
+			max = s
+		}
+		sum += s
+	}
+	avg = sum / float64(len(scores))
+	return
 }
 
 // ReportJSON writes machine-readable JSON output.

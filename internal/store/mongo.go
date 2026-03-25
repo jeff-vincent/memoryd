@@ -91,18 +91,16 @@ func (s *MongoStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *MongoStore) List(ctx context.Context, query string, limit int) ([]Memory, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-
 	filter := bson.M{}
 	if query != "" {
 		filter["content"] = bson.M{"$regex": query, "$options": "i"}
 	}
 
 	opts := options.Find().
-		SetLimit(int64(limit)).
 		SetSort(bson.D{{Key: "created_at", Value: -1}})
+	if limit > 0 {
+		opts.SetLimit(int64(limit))
+	}
 
 	cursor, err := s.collection.Find(ctx, filter, opts)
 	if err != nil {
