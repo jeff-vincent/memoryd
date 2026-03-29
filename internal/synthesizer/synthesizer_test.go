@@ -293,6 +293,59 @@ func TestSynthesizeQA_SKIP_WithWhitespace(t *testing.T) {
 	}
 }
 
+func TestSynthesizeQA_SKIP_WithExplanation(t *testing.T) {
+	// Haiku sometimes returns "SKIP\n\nThis is procedural narration..." instead of bare "SKIP".
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mockAnthropicResponse("SKIP\n\nThis is procedural narration describing the current state of an existing connector implementation."))
+	}))
+	defer server.Close()
+
+	s := New("sk-test", server.URL)
+	result, err := s.SynthesizeQA(context.Background(), "q", "I looked at the code and it seems fine.")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "" {
+		t.Errorf("SKIP with explanation should return empty, got: %q", result)
+	}
+}
+
+func TestSynthesizeQA_SKIP_WithSpaceExplanation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mockAnthropicResponse("SKIP The text is procedural narration."))
+	}))
+	defer server.Close()
+
+	s := New("sk-test", server.URL)
+	result, err := s.SynthesizeQA(context.Background(), "q", "a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "" {
+		t.Errorf("SKIP with space-separated explanation should return empty, got: %q", result)
+	}
+}
+
+func TestSynthesizeQA_StagePreamble_ReturnsEmpty(t *testing.T) {
+	// Haiku sometimes echoes the prompt structure: "STAGE 1: VALUE GATE\nThis text..."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mockAnthropicResponse("STAGE 1: VALUE GATE\nThis text contains procedural narration about reading code."))
+	}))
+	defer server.Close()
+
+	s := New("sk-test", server.URL)
+	result, err := s.SynthesizeQA(context.Background(), "q", "Let me look at the files...")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "" {
+		t.Errorf("STAGE preamble should return empty, got: %q", result)
+	}
+}
+
 func TestSynthesizeQA_ReturnsContent(t *testing.T) {
 	const synthesized = "The proxy server in internal/proxy/proxy.go binds to 127.0.0.1:7432 and enriches requests via the read pipeline before forwarding to the upstream Anthropic API."
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,19 @@
+[report] writing to benchmark-haiku-full.md
+=== memoryd comprehensive benchmark ===
+dataset:     nlile/misc-merged-claude-code-traces-v1
+sample:      32133 rows
+concurrency: 8
+target:      http://127.0.0.1:7432
+data-dir:    ./data
+jsonl:       benchmark-haiku-full.jsonl
+
+[1/5] loading rows from local JSONL...
+      loaded 32133 rows
+
+[2/5] classifying rows locally...
+      noise=5449  explanation=535  substantive=26149
+
+[3/5] pre-ingest snapshot...
+      memories before: 0
+
+[4/5] ingesting 32133 rows through /api/ingest (8 workers)...

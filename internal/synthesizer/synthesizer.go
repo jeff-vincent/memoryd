@@ -163,7 +163,13 @@ Output the rewritten memory directly, or SKIP. Nothing else.`, exchangeBlock)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(result) == skipSentinel {
+	trimmed := strings.TrimSpace(result)
+	if trimmed == skipSentinel || strings.HasPrefix(trimmed, skipSentinel+"\n") || strings.HasPrefix(trimmed, skipSentinel+" ") {
+		return "", nil
+	}
+	// Also catch "STAGE 1: VALUE GATE" preamble where the model echoes the prompt
+	// structure instead of outputting the rewritten memory directly.
+	if strings.HasPrefix(trimmed, "STAGE 1:") || strings.HasPrefix(trimmed, "STAGE 2:") {
 		return "", nil
 	}
 	return result, nil
