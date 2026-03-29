@@ -1,0 +1,24 @@
+[report] writing to benchmark-synth.md
+=== memoryd comprehensive benchmark ===
+dataset:     nlile/misc-merged-claude-code-traces-v1
+sample:      32133 rows
+concurrency: 8
+target:      http://127.0.0.1:7432
+data-dir:    data
+jsonl:       benchmark-synth.jsonl
+
+[1/5] loading rows from local JSONL...
+      loaded 32133 rows
+
+[2/5] classifying rows locally...
+      noise=5449  explanation=535  substantive=26149
+
+[3/5] pre-ingest snapshot...
+      memories before: 1330
+
+[4/5] ingesting 32133 rows through /api/ingest (8 workers)...
+      done in 12m3s (44.4 rows/sec)
+
+[5/5] post-ingest snapshot + search probes...
+      memories after: 1330 (delta: +0)
+      writing JSONL to benchmark-synth.jsonl...

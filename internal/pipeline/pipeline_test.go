@@ -23,9 +23,10 @@ func (m *mockEmbedder) Embed(_ context.Context, text string) ([]float32, error) 
 		return nil, context.DeadlineExceeded
 	}
 	vec := make([]float32, m.dim)
-	for i := range vec {
-		vec[i] = float32(i) * 0.001
-	}
+	// Place energy in a different dimension per call so distinct texts
+	// get near-orthogonal embeddings (won't trigger consolidation).
+	idx := (m.calls - 1) % m.dim
+	vec[idx] = 1.0
 	return vec, nil
 }
 
@@ -157,12 +158,12 @@ func TestWritePipeline_Process_SingleChunk(t *testing.T) {
 	st := &mockStore{}
 
 	wp := NewWritePipeline(emb, st)
-	wp.Process("Short text to store.", "test-source", map[string]any{"session": "s1"})
+	wp.Process("Short text to store — must be at least forty characters long.", "test-source", map[string]any{"session": "s1"})
 
 	if len(st.inserted) != 1 {
 		t.Fatalf("expected 1 insertion, got %d", len(st.inserted))
 	}
-	if st.inserted[0].Content != "Short text to store." {
+	if st.inserted[0].Content != "Short text to store — must be at least forty characters long." {
 		t.Errorf("content = %q", st.inserted[0].Content)
 	}
 	if st.inserted[0].Source != "test-source" {
@@ -200,7 +201,7 @@ func TestWritePipeline_Process_EmbeddingFailureContinues(t *testing.T) {
 	emb := &mockEmbedder{dim: 512, failOn: 1}
 	st := &mockStore{}
 
-	text := "Paragraph one.\n\nParagraph two."
+	text := "Paragraph one has enough content to pass the noise gate.\n\nParagraph two also has enough content to pass the noise gate."
 	wp := NewWritePipeline(emb, st)
 	wp.Process(text, "test", nil)
 
@@ -224,6 +225,69 @@ func TestWritePipeline_Process_EmptyText(t *testing.T) {
 	}
 }
 
+// --- ProcessDirect tests ---
+
+func TestWritePipeline_ProcessDirect_StoresEntry(t *testing.T) {
+	emb := &mockEmbedder{dim: 512}
+	st := &mockStore{}
+
+	wp := NewWritePipeline(emb, st)
+	result := wp.ProcessDirect("Q: How do goroutines work?\n\nA: They are lightweight threads managed by the Go runtime.", "claude-code", nil)
+
+	if result.Stored != 1 {
+		t.Errorf("expected 1 stored, got %d", result.Stored)
+	}
+	if len(st.inserted) != 1 {
+		t.Fatalf("expected 1 insertion, got %d", len(st.inserted))
+	}
+	if !strings.Contains(st.inserted[0].Content, "goroutines") {
+		t.Error("expected content to contain goroutines")
+	}
+}
+
+func TestWritePipeline_ProcessDirect_SkipsNoise(t *testing.T) {
+	emb := &mockEmbedder{dim: 512}
+	st := &mockStore{}
+
+	wp := NewWritePipeline(emb, st)
+	result := wp.ProcessDirect("hi", "claude-code", nil)
+
+	if result.Filtered != 1 {
+		t.Errorf("expected 1 filtered, got %d", result.Filtered)
+	}
+	if emb.calls != 0 {
+		t.Errorf("expected 0 embed calls for noise, got %d", emb.calls)
+	}
+}
+
+func TestWritePipeline_ProcessDirect_SkipsDuplicate(t *testing.T) {
+	emb := &mockEmbedder{dim: 512}
+	st := &mockStore{
+		memories: []store.Memory{
+			{Content: "Go uses goroutines.", Score: 0.95},
+		},
+	}
+
+	wp := NewWritePipeline(emb, st)
+	result := wp.ProcessDirect("Q: Tell me about goroutines.\n\nA: Go uses goroutines for concurrency.", "test", nil)
+
+	if result.Duplicates != 1 {
+		t.Errorf("expected 1 duplicate, got %d", result.Duplicates)
+	}
+	if result.Stored != 0 {
+		t.Errorf("expected 0 stored, got %d", result.Stored)
+	}
+}
+
+func TestWritePipeline_ProcessDirect_NilPipeline(t *testing.T) {
+	// WritePipeline with nil embedder/store should return empty result without panic.
+	wp := NewWritePipeline(nil, nil)
+	result := wp.ProcessDirect("some meaningful text here worth storing", "test", nil)
+	if result.Stored != 0 {
+		t.Errorf("expected 0 stored with nil pipeline, got %d", result.Stored)
+	}
+}
+
 // --- Self-filtering tests ---
 
 func TestWritePipeline_DedupSkipsDuplicate(t *testing.T) {
@@ -236,7 +300,7 @@ func TestWritePipeline_DedupSkipsDuplicate(t *testing.T) {
 	}
 
 	wp := NewWritePipeline(emb, st)
-	result := wp.ProcessFiltered("Go uses goroutines for concurrency.", "test", nil)
+	result := wp.ProcessFiltered("Go uses goroutines for concurrency and lightweight thread management.", "test", nil)
 
 	if result.Duplicates != 1 {
 		t.Errorf("expected 1 duplicate, got %d", result.Duplicates)
@@ -259,7 +323,7 @@ func TestWritePipeline_DedupAllowsNovel(t *testing.T) {
 	}
 
 	wp := NewWritePipeline(emb, st)
-	result := wp.ProcessFiltered("MongoDB Atlas supports vector search.", "test", nil)
+	result := wp.ProcessFiltered("MongoDB Atlas supports vector search with cosine similarity indexing.", "test", nil)
 
 	if result.Stored != 1 {
 		t.Errorf("expected 1 stored, got %d", result.Stored)
@@ -341,9 +405,252 @@ func TestIsNoise(t *testing.T) {
 		{"Go uses goroutines for lightweight concurrency.", false},
 	}
 	for _, tc := range tests {
-		got := isNoise(tc.text)
+		got := isNoise(tc.text, minContentLen, 0.4)
 		if got != tc.noise {
 			t.Errorf("isNoise(%q) = %v, want %v", tc.text, got, tc.noise)
 		}
+	}
+}
+
+// --- Topic boundary detection tests ---
+
+func TestDetectTopicGroups_SingleChunk(t *testing.T) {
+	chunks := []string{"only one"}
+	vecs := [][]float32{{1, 0, 0}}
+	groups := detectTopicGroups(chunks, vecs, TopicBoundaryThreshold, maxGroupChars)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+	if len(groups[0].chunks) != 1 {
+		t.Errorf("expected 1 chunk in group, got %d", len(groups[0].chunks))
+	}
+}
+
+func TestDetectTopicGroups_AllSameTopic(t *testing.T) {
+	// High similarity between consecutive chunks → all one group.
+	chunks := []string{"Go concurrency part 1", "Go concurrency part 2", "Go concurrency part 3"}
+	vecs := [][]float32{
+		{0.9, 0.1, 0, 0},
+		{0.85, 0.15, 0, 0},
+		{0.88, 0.12, 0, 0},
+	}
+	groups := detectTopicGroups(chunks, vecs, TopicBoundaryThreshold, maxGroupChars)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+	if len(groups[0].chunks) != 3 {
+		t.Errorf("expected 3 chunks in group, got %d", len(groups[0].chunks))
+	}
+}
+
+func TestDetectTopicGroups_TwoTopics(t *testing.T) {
+	// Chunks 0-1 similar, chunk 2 orthogonal → boundary between 1 and 2.
+	chunks := []string{"Go concurrency basics", "Go goroutines deep dive", "MongoDB Atlas indexing"}
+	vecs := [][]float32{
+		{0.9, 0.1, 0, 0},
+		{0.85, 0.15, 0, 0}, // similar to 0
+		{0, 0, 0.9, 0.1},   // different topic
+	}
+	groups := detectTopicGroups(chunks, vecs, TopicBoundaryThreshold, maxGroupChars)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+	if len(groups[0].chunks) != 2 {
+		t.Errorf("expected 2 chunks in first group, got %d", len(groups[0].chunks))
+	}
+	if len(groups[1].chunks) != 1 {
+		t.Errorf("expected 1 chunk in second group, got %d", len(groups[1].chunks))
+	}
+}
+
+func TestDetectTopicGroups_AllDifferent(t *testing.T) {
+	// All orthogonal → each chunk is its own group.
+	chunks := []string{"topic A", "topic B", "topic C"}
+	vecs := [][]float32{
+		{1, 0, 0, 0},
+		{0, 1, 0, 0},
+		{0, 0, 1, 0},
+	}
+	groups := detectTopicGroups(chunks, vecs, TopicBoundaryThreshold, maxGroupChars)
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(groups))
+	}
+}
+
+func TestDetectTopicGroups_Empty(t *testing.T) {
+	groups := detectTopicGroups(nil, nil, TopicBoundaryThreshold, maxGroupChars)
+	if len(groups) != 0 {
+		t.Errorf("expected 0 groups for nil input, got %d", len(groups))
+	}
+}
+
+func TestDetectTopicGroups_SizeCapSplitsSameTopic(t *testing.T) {
+	// 3 chunks, all same topic (identical vectors), but each chunk is
+	// large enough that 2 together exceed maxGroupChars.
+	bigChunk := strings.Repeat("a", maxGroupChars/2+100) // just over half the budget
+	chunks := []string{bigChunk, bigChunk, bigChunk}
+	vec := []float32{0.9, 0.1, 0, 0}
+	vecs := [][]float32{vec, vec, vec}
+
+	groups := detectTopicGroups(chunks, vecs, TopicBoundaryThreshold, maxGroupChars)
+	// First two won't fit together (combined > maxGroupChars), so each gets its own group.
+	if len(groups) < 2 {
+		t.Fatalf("expected at least 2 groups due to size cap, got %d", len(groups))
+	}
+	// Verify no group's combined text exceeds the budget.
+	for i, g := range groups {
+		total := 0
+		for j, c := range g.chunks {
+			if j > 0 {
+				total += len(joinSeparator)
+			}
+			total += len(c)
+		}
+		if total > maxGroupChars {
+			t.Errorf("group %d combined length %d exceeds maxGroupChars %d", i, total, maxGroupChars)
+		}
+	}
+}
+
+func TestDetectTopicGroups_SmallChunksFitInOneGroup(t *testing.T) {
+	// 3 small same-topic chunks that easily fit within the budget.
+	chunks := []string{"Go channels", "Go goroutines", "Go select"}
+	vec := []float32{0.9, 0.1, 0, 0}
+	vecs := [][]float32{vec, vec, vec}
+
+	groups := detectTopicGroups(chunks, vecs, TopicBoundaryThreshold, maxGroupChars)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group for small same-topic chunks, got %d", len(groups))
+	}
+	if len(groups[0].chunks) != 3 {
+		t.Errorf("expected 3 chunks in group, got %d", len(groups[0].chunks))
+	}
+}
+
+func TestDetectTopicGroups_MixedTopicAndSizeBoundaries(t *testing.T) {
+	// 4 chunks: 0-1 same topic (small), 2-3 different topic (big).
+	// Should split at topic boundary between 1 and 2, and again between
+	// 2 and 3 due to size.
+	small := "short chunk about Go"
+	big := strings.Repeat("b", maxGroupChars/2+100)
+	chunks := []string{small, small, big, big}
+	vecs := [][]float32{
+		{0.9, 0.1, 0, 0},
+		{0.85, 0.15, 0, 0}, // same topic as 0
+		{0, 0, 0.9, 0.1},   // topic boundary
+		{0, 0, 0.85, 0.15}, // same topic as 2 but too big to merge
+	}
+
+	groups := detectTopicGroups(chunks, vecs, TopicBoundaryThreshold, maxGroupChars)
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups (topic split + size split), got %d", len(groups))
+	}
+	if len(groups[0].chunks) != 2 {
+		t.Errorf("first group should have 2 small chunks, got %d", len(groups[0].chunks))
+	}
+	if len(groups[1].chunks) != 1 {
+		t.Errorf("second group should have 1 big chunk, got %d", len(groups[1].chunks))
+	}
+	if len(groups[2].chunks) != 1 {
+		t.Errorf("third group should have 1 big chunk, got %d", len(groups[2].chunks))
+	}
+}
+
+func TestWriteResult_SummaryWithMerged(t *testing.T) {
+	r := WriteResult{Stored: 2, Merged: 3, Duplicates: 1}
+	summary := r.Summary()
+	if !strings.Contains(summary, "3 merged (topic grouping)") {
+		t.Errorf("expected merged in summary, got %q", summary)
+	}
+}
+
+func TestCosineSim_Identical(t *testing.T) {
+	v := []float32{1, 2, 3, 4}
+	sim := cosineSim(v, v)
+	if sim < 0.999 {
+		t.Errorf("expected ~1.0 for identical vectors, got %f", sim)
+	}
+}
+
+func TestCosineSim_Orthogonal(t *testing.T) {
+	a := []float32{1, 0, 0}
+	b := []float32{0, 1, 0}
+	sim := cosineSim(a, b)
+	if sim > 0.001 {
+		t.Errorf("expected ~0 for orthogonal vectors, got %f", sim)
+	}
+}
+
+func TestCosineSim_Empty(t *testing.T) {
+	sim := cosineSim(nil, nil)
+	if sim != 0 {
+		t.Errorf("expected 0 for empty vectors, got %f", sim)
+	}
+}
+
+// --- preprocessContent tests ---
+
+func TestPreprocessContent_StripThinkBlock(t *testing.T) {
+	in := "<think>This is reasoning.</think>\n\nThe actual answer goes here with enough text to be useful."
+	got := preprocessContent(in)
+	if strings.Contains(got, "<think>") || strings.Contains(got, "reasoning") {
+		t.Errorf("think block not stripped: %q", got)
+	}
+	if !strings.Contains(got, "actual answer") {
+		t.Errorf("post-think content missing: %q", got)
+	}
+}
+
+func TestPreprocessContent_MultipleThinkBlocks(t *testing.T) {
+	in := "<think>first</think>keep this<think>second</think>and this"
+	got := preprocessContent(in)
+	if strings.Contains(got, "<think>") || strings.Contains(got, "first") || strings.Contains(got, "second") {
+		t.Errorf("think blocks not fully stripped: %q", got)
+	}
+	if !strings.Contains(got, "keep this") || !strings.Contains(got, "and this") {
+		t.Errorf("content between blocks missing: %q", got)
+	}
+}
+
+func TestPreprocessContent_UnclosedThinkBlock(t *testing.T) {
+	in := "before<think>unclosed reasoning that goes on and on"
+	got := preprocessContent(in)
+	if strings.Contains(got, "<think>") || strings.Contains(got, "unclosed") {
+		t.Errorf("unclosed think block not stripped: %q", got)
+	}
+	if got != "before" {
+		t.Errorf("expected 'before', got %q", got)
+	}
+}
+
+func TestPreprocessContent_NoThinkBlock(t *testing.T) {
+	in := "Normal response without any think blocks."
+	got := preprocessContent(in)
+	if got != in {
+		t.Errorf("content changed unexpectedly: %q", got)
+	}
+}
+
+func TestPreprocessContent_TruncatesOverlong(t *testing.T) {
+	// Build a string longer than maxPreprocessChars with a newline at position 45k.
+	var sb strings.Builder
+	for sb.Len() < 45_000 {
+		sb.WriteString("word ")
+	}
+	sb.WriteString("\n")
+	for sb.Len() < 60_000 {
+		sb.WriteString("extra ")
+	}
+	got := preprocessContent(sb.String())
+	if len(got) > maxPreprocessChars {
+		t.Errorf("output len %d exceeds maxPreprocessChars %d", len(got), maxPreprocessChars)
+	}
+}
+
+func TestPreprocessContent_EmptyAfterStrip(t *testing.T) {
+	in := "<think>everything is inside the think block</think>"
+	got := preprocessContent(in)
+	if got != "" {
+		t.Errorf("expected empty string after full strip, got %q", got)
 	}
 }

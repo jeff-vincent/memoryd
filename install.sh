@@ -24,7 +24,6 @@ MODEL_DIR="$MEMORYD_DIR/models"
 MODEL_PATH="$MODEL_DIR/voyage-4-nano.gguf"
 MODEL_URL="https://huggingface.co/jsonMartin/voyage-4-nano-gguf/resolve/main/voyage-4-nano-q8_0.gguf?download=true"
 CONFIG_PATH="$MEMORYD_DIR/config.yaml"
-INDEX_URL="https://raw.githubusercontent.com/$REPO/main/scripts/create_index.js"
 
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31m✗\033[0m %s\n' "$1"; }
@@ -115,22 +114,7 @@ else
   ok "llama-server → $INSTALL_DIR/llama-server"
 fi
 
-# Docker (only if no Atlas URI)
-if [[ -z "$ATLAS_URI" ]]; then
-  if command -v docker &>/dev/null; then
-    if docker info &>/dev/null 2>&1; then
-      ok "Docker is running"
-    else
-      fail "Docker is installed but not running"
-      info "Start Docker Desktop and try again, or pass --atlas <uri>"
-      exit 1
-    fi
-  else
-    fail "Docker is not installed (required for local MongoDB)"
-    info "Install Docker Desktop, or pass --atlas <uri> to use Atlas instead"
-    exit 1
-  fi
-else
+if [[ -n "$ATLAS_URI" ]]; then
   ok "Using Atlas connection string"
 fi
 
@@ -209,61 +193,14 @@ rm -rf "$TMPDIR_DL"
 
 step "MongoDB"
 
-if [[ -z "$ATLAS_URI" ]]; then
-  MONGO_URI="mongodb://localhost:27017/?directConnection=true"
-
-  if docker ps --format '{{.Names}}' | grep -q '^memoryd-mongo$'; then
-    ok "memoryd-mongo container already running"
-  elif docker ps -a --format '{{.Names}}' | grep -q '^memoryd-mongo$'; then
-    info "Starting existing memoryd-mongo container..."
-    docker start memoryd-mongo >/dev/null
-    ok "memoryd-mongo started"
-  else
-    info "Creating memoryd-mongo container..."
-    docker run -d --name memoryd-mongo -p 27017:27017 mongodb/mongodb-atlas-local:8.0 >/dev/null
-    ok "memoryd-mongo created"
-  fi
-
-  info "Waiting for MongoDB to be ready..."
-  for i in $(seq 1 30); do
-    if docker exec memoryd-mongo mongosh --quiet --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q 1; then
-      break
-    fi
-    sleep 1
-  done
-  ok "MongoDB is ready"
-
-  # Create vector search index.
-  info "Creating vector search index..."
-  TMPINDEX=$(mktemp)
-  $DOWNLOAD_QUIET "$INDEX_URL" > "$TMPINDEX" 2>/dev/null || {
-    # Fallback: write the index script inline.
-    cat > "$TMPINDEX" << 'JSEOF'
-db.memories.createSearchIndex(
-  "vector_index",
-  "vectorSearch",
-  {
-    fields: [
-      {
-        type: "vector",
-        numDimensions: 1024,
-        path: "embedding",
-        similarity: "cosine"
-      }
-    ]
-  }
-);
-JSEOF
-  }
-  docker cp "$TMPINDEX" memoryd-mongo:/tmp/create_index.js 2>/dev/null
-  docker exec memoryd-mongo mongosh memoryd --quiet --file /tmp/create_index.js 2>/dev/null || true
-  rm -f "$TMPINDEX"
-  ok "Vector search index ready"
-else
+if [[ -n "$ATLAS_URI" ]]; then
   MONGO_URI="$ATLAS_URI"
   ok "Using Atlas: ${ATLAS_URI:0:30}..."
   info "Ensure you have a vector search index named 'vector_index'"
   info "on the 'memories' collection (numDimensions: 1024, similarity: cosine)"
+else
+  MONGO_URI=""
+  ok "Skipped — connect from the Memoryd menu bar app after install"
 fi
 
 # ── Embedding model ────────────────────────────────────────────────
@@ -286,20 +223,42 @@ step "Config"
 
 mkdir -p "$MEMORYD_DIR"
 
+if [[ -n "$MONGO_URI" ]]; then
+  # Store MongoDB URI securely in OS keychain (macOS Keychain / Linux secret-tool).
+  KEYCHAIN_OK=false
+  if [[ "$OS" == "darwin" ]]; then
+    /usr/bin/security add-generic-password -s memoryd -a mongodb_atlas_uri -w "$MONGO_URI" -U 2>/dev/null \
+      && KEYCHAIN_OK=true
+  elif command -v secret-tool &>/dev/null; then
+    echo -n "$MONGO_URI" | secret-tool store --label "memoryd mongodb_atlas_uri" service memoryd key mongodb_atlas_uri 2>/dev/null \
+      && KEYCHAIN_OK=true
+  fi
+
+  if $KEYCHAIN_OK; then
+    CONFIG_URI="keychain:mongodb_atlas_uri"
+    ok "MongoDB URI stored in OS keychain"
+  else
+    CONFIG_URI="$MONGO_URI"
+    info "OS keychain not available — URI stored in config file (less secure)"
+  fi
+else
+  CONFIG_URI=""
+fi
+
 if [[ -f "$CONFIG_PATH" ]]; then
   ok "Config exists at $CONFIG_PATH"
-  if grep -q 'mongodb_atlas_uri:' "$CONFIG_PATH"; then
+  if [[ -n "$CONFIG_URI" ]] && grep -q 'mongodb_atlas_uri:' "$CONFIG_PATH"; then
     info "Updating mongodb_atlas_uri in existing config"
     if [[ "$OS" == "darwin" ]]; then
-      sed -i '' "s|mongodb_atlas_uri:.*|mongodb_atlas_uri: \"$MONGO_URI\"|" "$CONFIG_PATH"
+      sed -i '' "s|mongodb_atlas_uri:.*|mongodb_atlas_uri: \"$CONFIG_URI\"|" "$CONFIG_PATH"
     else
-      sed -i "s|mongodb_atlas_uri:.*|mongodb_atlas_uri: \"$MONGO_URI\"|" "$CONFIG_PATH"
+      sed -i "s|mongodb_atlas_uri:.*|mongodb_atlas_uri: \"$CONFIG_URI\"|" "$CONFIG_PATH"
     fi
   fi
 else
   cat > "$CONFIG_PATH" << EOF
 port: 7432
-mongodb_atlas_uri: "$MONGO_URI"
+mongodb_atlas_uri: "$CONFIG_URI"
 mongodb_database: memoryd
 model_path: ~/.memoryd/models/voyage-4-nano.gguf
 embedding_dim: 1024
@@ -482,8 +441,10 @@ done
 
 if curl -sf "http://127.0.0.1:7432/health" >/dev/null 2>&1; then
   ok "Daemon is healthy"
-else
+elif [[ -n "$ATLAS_URI" ]]; then
   fail "Daemon did not start — check $MEMORYD_DIR/daemon.log"
+else
+  info "Daemon will start after MongoDB is connected from the menu bar app"
 fi
 
 # ── Done ───────────────────────────────────────────────────────────
@@ -491,14 +452,23 @@ fi
 step "Ready!"
 
 echo ""
-echo "  memoryd is running and ready to use."
-echo ""
-echo "  Dashboard:     http://127.0.0.1:7432"
-echo "  Proxy mode:    export ANTHROPIC_BASE_URL=http://127.0.0.1:7432"
-echo "  MCP mode:      Already configured in ~/.mcp.json"
+if [[ -n "$ATLAS_URI" ]]; then
+  echo "  memoryd is running and ready to use."
+  echo ""
+  echo "  Dashboard:  http://127.0.0.1:7432"
+  echo "  MCP mode:   Already configured in ~/.mcp.json"
+else
+  echo "  memoryd is installed. One more step:"
+  echo ""
+  if [[ "$OS" == "darwin" && -d "$APP_DIR/Memoryd.app" ]]; then
+  echo "  Click the M icon in your menu bar and select 'Connect to MongoDB'"
+  echo "  to connect to a local (Docker) or remote (Atlas) database."
+  else
+  echo "  Run: memoryd config --mongo <uri>   (or set mongodb_atlas_uri in ~/.memoryd/config.yaml)"
+  fi
+fi
 echo ""
 if [[ "$OS" == "darwin" && -d "$APP_DIR/Memoryd.app" ]]; then
-echo "  The Memoryd menu bar app is running — look for M● in your menu bar."
-echo "  Use it to start/stop the daemon, switch modes, and manage sources."
+echo "  The Memoryd menu bar app is running — look for M in your menu bar."
 echo ""
 fi

@@ -540,6 +540,57 @@ func splitAtWords(text string, maxChars int) []string {
 	return chunks
 }
 
+// ChunkedSegment is a chunk with structural metadata preserved.
+type ChunkedSegment struct {
+	Text    string // formatted chunk text (same as what Chunk() returns)
+	Heading string // nearest heading above this segment (empty if none)
+	Kind    string // "prose", "code", "list", "table"
+}
+
+// ChunkStructured is like Chunk but returns structural metadata alongside
+// each chunk. Use this when downstream callers need heading context for
+// grouping (e.g., ingest section synthesis).
+func ChunkStructured(text string, maxTokens int) []ChunkedSegment {
+	if maxTokens <= 0 {
+		maxTokens = DefaultMaxTokens
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+
+	maxChars := maxTokens * charsPerToken
+	segments := parseSegments(text)
+	merged := mergeSegments(segments, maxChars)
+
+	var result []ChunkedSegment
+	for _, seg := range merged {
+		formatted := formatSegment(seg, maxChars)
+		for _, chunk := range formatted {
+			result = append(result, ChunkedSegment{
+				Text:    chunk,
+				Heading: seg.heading,
+				Kind:    segKindString(seg.kind),
+			})
+		}
+	}
+	return result
+}
+
+// segKindString converts a segmentKind to a human-readable string.
+func segKindString(k segmentKind) string {
+	switch k {
+	case segCodeBlock:
+		return "code"
+	case segListBlock:
+		return "list"
+	case segTableBlock:
+		return "table"
+	default:
+		return "prose"
+	}
+}
+
 // detectContent classifies the dominant content type of text.
 // Exported for testing.
 func detectContent(text string) contentType {

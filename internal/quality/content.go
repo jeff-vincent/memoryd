@@ -8,10 +8,10 @@ import (
 	"github.com/memory-daemon/memoryd/internal/embedding"
 )
 
-// qualityProtos are generic descriptions of high-value knowledge chunks.
+// DefaultQualityProtos are generic descriptions of high-value knowledge chunks.
 // They are embedded once at startup and used to score incoming chunks by
 // cosine similarity — no domain-specific rules needed.
-var qualityProtos = []string{
+var DefaultQualityProtos = []string{
 	"important technical decision with reasoning and rationale",
 	"architecture pattern approach and implementation details",
 	"debugging solution root cause analysis and fix",
@@ -20,8 +20,8 @@ var qualityProtos = []string{
 	"error message workaround resolution and explanation",
 }
 
-// noiseProtos are generic descriptions of low-signal content.
-var noiseProtos = []string{
+// DefaultNoiseProtos are generic descriptions of low-signal content.
+var DefaultNoiseProtos = []string{
 	"greeting acknowledgment helpful response sure happy",
 	"let me know if you need anything else feel free",
 	"i will help you with that certainly of course",
@@ -35,10 +35,23 @@ type ContentScorer struct {
 	noiseVecs   [][]float32
 }
 
-// NewContentScorer embeds the quality and noise prototypes. Should be called
-// once during daemon startup. On error, returns nil — callers should treat a
-// nil scorer as "scoring disabled" and continue without content scoring.
+// NewContentScorer embeds the default quality and noise prototypes. Should be
+// called once during daemon startup. On error, returns nil — callers should
+// treat a nil scorer as "scoring disabled" and continue without content scoring.
 func NewContentScorer(ctx context.Context, emb embedding.Embedder) (*ContentScorer, error) {
+	return NewContentScorerWithProtos(ctx, emb, nil, nil)
+}
+
+// NewContentScorerWithProtos embeds custom prototype sets. Empty slices fall
+// back to the built-in defaults. Use this when the user has configured custom
+// prototypes via the dashboard.
+func NewContentScorerWithProtos(ctx context.Context, emb embedding.Embedder, qualityProtos, noiseProtos []string) (*ContentScorer, error) {
+	if len(qualityProtos) == 0 {
+		qualityProtos = DefaultQualityProtos
+	}
+	if len(noiseProtos) == 0 {
+		noiseProtos = DefaultNoiseProtos
+	}
 	qualityVecs, err := emb.EmbedBatch(ctx, qualityProtos)
 	if err != nil {
 		return nil, err
@@ -48,6 +61,21 @@ func NewContentScorer(ctx context.Context, emb embedding.Embedder) (*ContentScor
 		return nil, err
 	}
 	return &ContentScorer{qualityVecs: qualityVecs, noiseVecs: noiseVecs}, nil
+}
+
+// NewContentScorerFromRejections builds a scorer whose noise prototypes are
+// the actual assistant texts accumulated in the rejection store, rather than
+// the static defaults. When rejectionTexts is empty it falls back to defaults.
+// This is the primary path for adaptive noise learning.
+func NewContentScorerFromRejections(ctx context.Context, emb embedding.Embedder, rejectionTexts, qualityProtos []string) (*ContentScorer, error) {
+	if len(qualityProtos) == 0 {
+		qualityProtos = DefaultQualityProtos
+	}
+	noiseProtos := rejectionTexts
+	if len(noiseProtos) == 0 {
+		noiseProtos = DefaultNoiseProtos
+	}
+	return NewContentScorerWithProtos(ctx, emb, qualityProtos, noiseProtos)
 }
 
 // Score returns a content quality score in [0.0, 1.0] for the given embedding

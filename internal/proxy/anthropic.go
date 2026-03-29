@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,7 +13,18 @@ import (
 	"strings"
 
 	"github.com/memory-daemon/memoryd/internal/pipeline"
+	"github.com/memory-daemon/memoryd/internal/rejection"
+	"github.com/memory-daemon/memoryd/internal/synthesizer"
 )
+
+// minSessionTurns is the minimum number of complete Q&A pairs needed before
+// a session summary is generated. A "pair" is one user + one assistant turn.
+const minSessionTurns = 3
+
+// sessionSynthesisInterval controls how often session summaries are generated
+// after the initial one. Fires at minSessionTurns, then every N pairs after,
+// preventing an ever-growing stack of overlapping summaries.
+const sessionSynthesisInterval = 5
 
 // anthropicHandler transparently proxies /v1/messages, capturing response
 // content on the way out for the write pipeline (ingestion). Retrieval is
@@ -22,14 +34,18 @@ type anthropicHandler struct {
 	write        *pipeline.WritePipeline
 	client       *http.Client
 	writeEnabled bool // false in mcp or mcp-readonly modes
+	synth        *synthesizer.Synthesizer
+	rejLog       *rejection.Store
 }
 
-func newAnthropicHandler(upstreamURL string, write *pipeline.WritePipeline, client *http.Client, writeEnabled bool) *anthropicHandler {
+func newAnthropicHandler(upstreamURL string, write *pipeline.WritePipeline, client *http.Client, writeEnabled bool, synth *synthesizer.Synthesizer, rejLog *rejection.Store) *anthropicHandler {
 	return &anthropicHandler{
 		upstreamURL:  upstreamURL,
 		write:        write,
 		client:       client,
 		writeEnabled: writeEnabled,
+		synth:        synth,
+		rejLog:       rejLog,
 	}
 }
 
@@ -98,14 +114,14 @@ func (h *anthropicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isStreaming {
-		h.handleStream(w, upResp)
+		h.handleStream(w, upResp, rawReq)
 	} else {
-		h.handleSync(w, upResp)
+		h.handleSync(w, upResp, rawReq)
 	}
 }
 
 // handleSync proxies a non-streaming response and kicks off the write path.
-func (h *anthropicHandler) handleSync(w http.ResponseWriter, resp *http.Response) {
+func (h *anthropicHandler) handleSync(w http.ResponseWriter, resp *http.Response, rawReq map[string]json.RawMessage) {
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
@@ -116,20 +132,17 @@ func (h *anthropicHandler) handleSync(w http.ResponseWriter, resp *http.Response
 	}
 	w.Write(body)
 
-	if resp.StatusCode == http.StatusOK {
-		go func() {
-			if h.writeEnabled {
-				if text := extractResponseText(body); text != "" {
-					h.write.Process(text, "claude-code", nil)
-				}
-			}
-		}()
+	if resp.StatusCode == http.StatusOK && h.writeEnabled {
+		text := extractResponseText(body)
+		if text != "" {
+			go h.ingest(rawReq, text)
+		}
 	}
 }
 
 // handleStream proxies SSE events in real time while buffering the full
 // response text for the async write path.
-func (h *anthropicHandler) handleStream(w http.ResponseWriter, resp *http.Response) {
+func (h *anthropicHandler) handleStream(w http.ResponseWriter, resp *http.Response, rawReq map[string]json.RawMessage) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -156,11 +169,83 @@ func (h *anthropicHandler) handleStream(w http.ResponseWriter, resp *http.Respon
 	if text := responseBuf.String(); text != "" {
 		log.Printf("[proxy] stream done, writing %d bytes to store", len(text))
 		if h.writeEnabled {
-			go h.write.Process(text, "claude-code", nil)
+			go h.ingest(rawReq, text)
 		}
 	} else {
 		log.Printf("[proxy] stream done, no text extracted")
 	}
+}
+
+// ingest stores the assistant response, pairing it with the last user message
+// and optionally synthesizing a session summary.
+func (h *anthropicHandler) ingest(rawReq map[string]json.RawMessage, assistantText string) {
+	ctx := context.Background()
+	userMsg := extractLastUserMessage(rawReq)
+
+	if h.synth.Available() {
+		// Cheap pre-filter: skip obvious ack+status exchanges without an LLM call.
+		if userMsg != "" && rejection.QuickFilter(userMsg, assistantText) {
+			h.rejLog.Add(rejection.StagePreFilter, userMsg, assistantText)
+			log.Printf("[proxy] pre-filter: skipped procedural exchange (user=%d asst=%d chars)", len(userMsg), len(assistantText))
+		} else {
+			// All content goes through the LLM quality gate — no bypass.
+			go func() {
+				entry, err := h.synth.SynthesizeQA(ctx, userMsg, assistantText)
+				if err != nil {
+					log.Printf("[proxy] SynthesizeQA error: %v — skipping (quality gate)", err)
+					return
+				}
+				if entry == "" {
+					h.rejLog.Add(rejection.StageSynthesizer, userMsg, assistantText)
+					log.Printf("[proxy] SynthesizeQA: exchange skipped (no durable value)")
+					return
+				}
+				h.write.ProcessDirect(entry, "claude-code", nil)
+				log.Printf("[proxy] SynthesizeQA: stored entry (%d chars)", len(entry))
+			}()
+		}
+	} else {
+		log.Printf("[proxy] synthesizer unavailable — skipping write (quality gate requires LLM)")
+	}
+
+	// Session synthesis: distill every sessionSynthesisInterval new pairs.
+	// Fires at minSessionTurns, then every sessionSynthesisInterval pairs after,
+	// preventing an ever-growing stack of overlapping session summaries.
+	if h.synth.Available() {
+		turns := extractConversationTurns(rawReq)
+		// Append the current assistant response as the final turn.
+		if assistantText != "" {
+			turns = append(turns, synthesizer.ConversationTurn{Role: "assistant", Content: assistantText})
+		}
+		pairs := countPairs(turns)
+		if pairs >= minSessionTurns && (pairs == minSessionTurns || pairs%sessionSynthesisInterval == 0) {
+			go func() {
+				summary, err := h.synth.SynthesizeConversation(ctx, turns)
+				if err != nil {
+					log.Printf("[proxy] session synthesis error: %v", err)
+					return
+				}
+				h.write.ProcessDirect(summary, "claude-code-session", nil)
+				log.Printf("[proxy] session summary stored (%d chars, %d turns)", len(summary), len(turns))
+			}()
+		}
+	}
+}
+
+// countPairs counts the number of complete user+assistant turn pairs.
+func countPairs(turns []synthesizer.ConversationTurn) int {
+	var users, assistants int
+	for _, t := range turns {
+		if t.Role == "user" {
+			users++
+		} else if t.Role == "assistant" {
+			assistants++
+		}
+	}
+	if users < assistants {
+		return users
+	}
+	return assistants
 }
 
 // --- helpers ---
@@ -209,4 +294,89 @@ func extractTextDelta(data string, buf *strings.Builder) {
 			buf.WriteString(text)
 		}
 	}
+}
+
+// extractLastUserMessage returns the text of the last user message in the request.
+func extractLastUserMessage(rawReq map[string]json.RawMessage) string {
+	raw, ok := rawReq["messages"]
+	if !ok {
+		return ""
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return ""
+	}
+	// Walk backwards to find the last user message.
+	for i := len(messages) - 1; i >= 0; i-- {
+		var msg struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(messages[i], &msg); err != nil {
+			continue
+		}
+		if msg.Role == "user" {
+			return extractContentText(msg.Content)
+		}
+	}
+	return ""
+}
+
+// extractContentText handles both string content and structured content blocks.
+func extractContentText(raw json.RawMessage) string {
+	// Try plain string first.
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	// Try array of content blocks.
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// formatQAPair formats a user question and assistant answer as a structured entry.
+func formatQAPair(question, answer string) string {
+	return fmt.Sprintf("**Q:** %s\n\n**A:** %s", strings.TrimSpace(question), strings.TrimSpace(answer))
+}
+
+// extractConversationTurns parses all messages from the request into turns.
+func extractConversationTurns(rawReq map[string]json.RawMessage) []synthesizer.ConversationTurn {
+	raw, ok := rawReq["messages"]
+	if !ok {
+		return nil
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return nil
+	}
+	turns := make([]synthesizer.ConversationTurn, 0, len(messages))
+	for _, m := range messages {
+		var msg struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(m, &msg); err != nil {
+			continue
+		}
+		text := extractContentText(msg.Content)
+		if text != "" && (msg.Role == "user" || msg.Role == "assistant") {
+			turns = append(turns, synthesizer.ConversationTurn{
+				Role:    msg.Role,
+				Content: text,
+			})
+		}
+	}
+	return turns
 }

@@ -381,3 +381,40 @@ func (s *MongoStore) DeleteMemoriesBySource(ctx context.Context, source string) 
 	_, err := s.collection.DeleteMany(ctx, filter)
 	return err
 }
+
+// CheckVectorIndex verifies that the required vector_index exists on the
+// memories collection. Returns nil if found, or an error with setup guidance.
+func (s *MongoStore) CheckVectorIndex(ctx context.Context) error {
+	cursor, err := s.collection.Aggregate(ctx, mongo.Pipeline{
+		{{Key: "$listSearchIndexes", Value: bson.D{}}},
+	})
+	if err != nil {
+		// $listSearchIndexes may not be available on very old MongoDB versions.
+		// Don't block startup, just warn.
+		return fmt.Errorf("could not list search indexes (is this Atlas or Atlas Local?): %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var indexes []struct {
+		Name   string `bson:"name"`
+		Status string `bson:"status"`
+	}
+	if err := cursor.All(ctx, &indexes); err != nil {
+		return fmt.Errorf("reading search indexes: %w", err)
+	}
+
+	for _, idx := range indexes {
+		if idx.Name == "vector_index" {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("vector_index not found on the memories collection -- " +
+		"memoryd requires a vector search index to operate.\n\n" +
+		"  For Atlas Local / Community (Docker):\n" +
+		"    docker cp scripts/create_index.js <container>:/tmp/create_index.js\n" +
+		"    docker exec <container> mongosh memoryd --quiet --file /tmp/create_index.js\n\n" +
+		"  For Atlas proper:\n" +
+		"    mongosh \"<your-atlas-uri>\" --file scripts/create_atlas_indexes.js\n\n" +
+		"  See https://memoryd.dev/docs/getting-started for details")
+}

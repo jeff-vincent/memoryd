@@ -20,10 +20,11 @@ type dashboardHandler struct {
 	store       store.Store
 	sourceStore store.SourceStore
 	quality     *quality.Tracker
+	steward     StewardStatsProvider
 }
 
-func registerDashboard(mux *http.ServeMux, st store.Store, ss store.SourceStore, qt *quality.Tracker) {
-	h := &dashboardHandler{store: st, sourceStore: ss, quality: qt}
+func registerDashboard(mux *http.ServeMux, st store.Store, ss store.SourceStore, qt *quality.Tracker, sp StewardStatsProvider) {
+	h := &dashboardHandler{store: st, sourceStore: ss, quality: qt, steward: sp}
 
 	mux.HandleFunc("/", h.serveUI)
 	mux.HandleFunc("/api/dashboard", h.handleDashboard)
@@ -40,6 +41,7 @@ func (d *dashboardHandler) serveUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Write(data)
 }
 
@@ -128,6 +130,7 @@ func (d *dashboardHandler) handleDashboard(w http.ResponseWriter, r *http.Reques
 		},
 		"recent_retrievals": recentRetrievals,
 		"top_memories":      topMems,
+		"steward":           d.stewardSnapshot(),
 	})
 }
 
@@ -137,5 +140,19 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
 		fmt.Fprintf(w, `{"error":"encode: %s"}`, err)
+	}
+}
+
+func (d *dashboardHandler) stewardSnapshot() map[string]any {
+	if d.steward == nil {
+		return map[string]any{"active": false}
+	}
+	s := d.steward.LastSweep()
+	return map[string]any{
+		"active":     true,
+		"scored":     s.Scored,
+		"pruned":     s.Pruned,
+		"merged":     s.Merged,
+		"elapsed_ms": s.Elapsed.Milliseconds(),
 	}
 }

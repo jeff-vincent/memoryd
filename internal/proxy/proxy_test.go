@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,9 +9,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/memory-daemon/memoryd/internal/config"
 	"github.com/memory-daemon/memoryd/internal/pipeline"
+	"github.com/memory-daemon/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/synthesizer"
 )
 
 func TestExtractResponseText_ValidResponse(t *testing.T) {
@@ -130,7 +134,7 @@ func TestHealthEndpoint(t *testing.T) {
 	cfg := &config.Config{Port: 0}
 	read := pipeline.NewReadPipeline(nil, nil, cfg)
 	write := pipeline.NewWritePipeline(nil, nil)
-	srv := NewServer(cfg, read, write)
+	srv := NewServer(cfg, "test", read, write) //nolint — no synth needed for health test
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -254,6 +258,209 @@ func TestAnthropicHandler_StreamRoundTrip(t *testing.T) {
 		t.Error("expected world! in streamed response")
 	}
 }
+
+// --- Q&A pairing helpers ---
+
+func TestExtractLastUserMessage_String(t *testing.T) {
+	raw := map[string]json.RawMessage{
+		"messages": json.RawMessage(`[
+			{"role":"user","content":"first question"},
+			{"role":"assistant","content":"first answer"},
+			{"role":"user","content":"second question"}
+		]`),
+	}
+	got := extractLastUserMessage(raw)
+	if got != "second question" {
+		t.Errorf("got %q, want second question", got)
+	}
+}
+
+func TestExtractLastUserMessage_BlockContent(t *testing.T) {
+	raw := map[string]json.RawMessage{
+		"messages": json.RawMessage(`[
+			{"role":"user","content":[{"type":"text","text":"block question"}]}
+		]`),
+	}
+	got := extractLastUserMessage(raw)
+	if got != "block question" {
+		t.Errorf("got %q, want block question", got)
+	}
+}
+
+func TestExtractLastUserMessage_NoMessages(t *testing.T) {
+	raw := map[string]json.RawMessage{}
+	got := extractLastUserMessage(raw)
+	if got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestExtractLastUserMessage_OnlyAssistant(t *testing.T) {
+	raw := map[string]json.RawMessage{
+		"messages": json.RawMessage(`[{"role":"assistant","content":"hello"}]`),
+	}
+	got := extractLastUserMessage(raw)
+	if got != "" {
+		t.Errorf("expected empty when no user message, got %q", got)
+	}
+}
+
+func TestExtractContentText_PlainString(t *testing.T) {
+	raw := json.RawMessage(`"hello world"`)
+	got := extractContentText(raw)
+	if got != "hello world" {
+		t.Errorf("got %q, want hello world", got)
+	}
+}
+
+func TestExtractContentText_Blocks(t *testing.T) {
+	raw := json.RawMessage(`[{"type":"text","text":"part one"},{"type":"image","text":""},{"type":"text","text":"part two"}]`)
+	got := extractContentText(raw)
+	if got != "part one\npart two" {
+		t.Errorf("got %q, want part one\\npart two", got)
+	}
+}
+
+func TestFormatQAPair(t *testing.T) {
+	result := formatQAPair("How do I handle errors?", "Use the errors package.")
+	if !strings.Contains(result, "**Q:**") {
+		t.Error("expected Q label")
+	}
+	if !strings.Contains(result, "**A:**") {
+		t.Error("expected A label")
+	}
+	if !strings.Contains(result, "How do I handle errors?") {
+		t.Error("expected question text")
+	}
+	if !strings.Contains(result, "Use the errors package.") {
+		t.Error("expected answer text")
+	}
+}
+
+func TestExtractConversationTurns_MultiTurn(t *testing.T) {
+	raw := map[string]json.RawMessage{
+		"messages": json.RawMessage(`[
+			{"role":"user","content":"question one"},
+			{"role":"assistant","content":"answer one"},
+			{"role":"user","content":"question two"}
+		]`),
+	}
+	turns := extractConversationTurns(raw)
+	if len(turns) != 3 {
+		t.Fatalf("expected 3 turns, got %d", len(turns))
+	}
+	if turns[0].Role != "user" || turns[0].Content != "question one" {
+		t.Errorf("unexpected turn 0: %+v", turns[0])
+	}
+	if turns[1].Role != "assistant" || turns[1].Content != "answer one" {
+		t.Errorf("unexpected turn 1: %+v", turns[1])
+	}
+}
+
+func TestExtractConversationTurns_Empty(t *testing.T) {
+	raw := map[string]json.RawMessage{}
+	turns := extractConversationTurns(raw)
+	if len(turns) != 0 {
+		t.Errorf("expected 0 turns, got %d", len(turns))
+	}
+}
+
+func TestCountPairs(t *testing.T) {
+	turns := []synthesizer.ConversationTurn{
+		{Role: "user", Content: "q1"},
+		{Role: "assistant", Content: "a1"},
+		{Role: "user", Content: "q2"},
+		{Role: "assistant", Content: "a2"},
+		{Role: "user", Content: "q3"},
+	}
+	// 3 user, 2 assistant → min = 2 pairs
+	if got := countPairs(turns); got != 2 {
+		t.Errorf("countPairs = %d, want 2", got)
+	}
+}
+
+// --- Steward stats dashboard tests ---
+
+type mockStewardStats struct {
+	stats SweepStats
+}
+
+func (m *mockStewardStats) LastSweep() SweepStats { return m.stats }
+
+func TestDashboardAPI_IncludesStewardStats(t *testing.T) {
+	// Minimal mock store for the dashboard handler.
+	handler := &dashboardHandler{
+		store:   &minimalStore{},
+		steward: &mockStewardStats{stats: SweepStats{Scored: 42, Pruned: 3, Merged: 1, Elapsed: 150 * time.Millisecond}},
+	}
+
+	req := httptest.NewRequest("GET", "/api/dashboard", nil)
+	w := httptest.NewRecorder()
+	handler.handleDashboard(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", w.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	stw, ok := resp["steward"].(map[string]any)
+	if !ok {
+		t.Fatal("expected steward key in response")
+	}
+	if stw["active"] != true {
+		t.Error("expected steward active=true")
+	}
+	if stw["scored"].(float64) != 42 {
+		t.Errorf("scored = %v, want 42", stw["scored"])
+	}
+	if stw["merged"].(float64) != 1 {
+		t.Errorf("merged = %v, want 1", stw["merged"])
+	}
+}
+
+func TestDashboardAPI_NilSteward(t *testing.T) {
+	handler := &dashboardHandler{
+		store:   &minimalStore{},
+		steward: nil,
+	}
+
+	req := httptest.NewRequest("GET", "/api/dashboard", nil)
+	w := httptest.NewRecorder()
+	handler.handleDashboard(w, req)
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	stw := resp["steward"].(map[string]any)
+	if stw["active"] != false {
+		t.Error("expected steward active=false when nil")
+	}
+}
+
+// minimalStore implements store.Store for dashboard tests (all methods return empty/nil).
+type minimalStore struct{}
+
+func (m *minimalStore) VectorSearch(_ context.Context, _ []float32, _ int) ([]store.Memory, error) {
+	return nil, nil
+}
+func (m *minimalStore) Insert(_ context.Context, _ store.Memory) error { return nil }
+func (m *minimalStore) Delete(_ context.Context, _ string) error       { return nil }
+func (m *minimalStore) List(_ context.Context, _ string, _ int) ([]store.Memory, error) {
+	return nil, nil
+}
+func (m *minimalStore) DeleteAll(_ context.Context) error                        { return nil }
+func (m *minimalStore) CountBySource(_ context.Context, _ string) (int64, error) { return 0, nil }
+func (m *minimalStore) UpdateContent(_ context.Context, _ string, _ string, _ []float32) error {
+	return nil
+}
+func (m *minimalStore) ListBySource(_ context.Context, _ string, _ int) ([]store.Memory, error) {
+	return nil, nil
+}
+func (m *minimalStore) Close() error { return nil }
 
 func TestAnthropicHandler_UpstreamError(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

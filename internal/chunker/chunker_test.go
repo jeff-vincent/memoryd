@@ -839,3 +839,126 @@ func TestChunk_LargeDocumentEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ChunkStructured tests
+// ---------------------------------------------------------------------------
+
+func TestChunkStructured_Empty(t *testing.T) {
+	segs := ChunkStructured("", 512)
+	if len(segs) != 0 {
+		t.Errorf("expected 0 segments for empty input, got %d", len(segs))
+	}
+}
+
+func TestChunkStructured_PlainText_NoHeading(t *testing.T) {
+	segs := ChunkStructured("This is a plain text paragraph with no heading.", 512)
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Heading != "" {
+		t.Errorf("expected empty heading, got %q", segs[0].Heading)
+	}
+	if segs[0].Kind != "prose" {
+		t.Errorf("expected kind=prose, got %q", segs[0].Kind)
+	}
+	if segs[0].Text == "" {
+		t.Error("expected non-empty text")
+	}
+}
+
+func TestChunkStructured_HeadingPreserved(t *testing.T) {
+	text := "## Getting Started\n\nInstall the package with go get.\n\n## Advanced Usage\n\nConfigure options via the config file."
+	segs := ChunkStructured(text, 512)
+	if len(segs) == 0 {
+		t.Fatal("expected segments")
+	}
+	// At least one segment should carry a heading.
+	var hasHeading bool
+	for _, s := range segs {
+		if s.Heading != "" {
+			hasHeading = true
+			break
+		}
+	}
+	if !hasHeading {
+		t.Error("expected at least one segment with a heading")
+	}
+}
+
+func TestChunkStructured_CodeBlockKind(t *testing.T) {
+	text := "## Example\n\nSome prose.\n\n```go\nfunc main() {}\n```"
+	segs := ChunkStructured(text, 512)
+	var foundCode bool
+	for _, s := range segs {
+		if s.Kind == "code" {
+			foundCode = true
+		}
+	}
+	if !foundCode {
+		t.Error("expected at least one segment with kind=code")
+	}
+}
+
+func TestChunkStructured_ListKind(t *testing.T) {
+	// Use a small budget so the heading and list can't be merged.
+	// The list segment alone (~40 chars) fits, but heading+list (~55) exceeds 8-token budget (32 chars).
+	text := "## Items\n\n- alpha\n- beta\n- gamma\n- delta\n- epsilon\n- zeta\n- eta\n- theta"
+	segs := ChunkStructured(text, 4) // 16 chars budget — forces list into its own segment
+	var foundList bool
+	for _, s := range segs {
+		if s.Kind == "list" {
+			foundList = true
+		}
+	}
+	if !foundList {
+		// Also acceptable: list was merged into heading segment — verify list content is present.
+		var hasListContent bool
+		for _, s := range segs {
+			if strings.Contains(s.Text, "- alpha") {
+				hasListContent = true
+				break
+			}
+		}
+		if !hasListContent {
+			t.Error("expected list content in segments")
+		}
+	}
+}
+
+func TestChunkStructured_ProducesConsistentChunks(t *testing.T) {
+	// ChunkStructured should produce the same chunks as Chunk() — only metadata differs.
+	text := "## Section\n\nSome content here.\n\n```go\nfunc foo() {}\n```"
+	flat := Chunk(text, 512)
+	structured := ChunkStructured(text, 512)
+	if len(flat) != len(structured) {
+		t.Errorf("Chunk()=%d vs ChunkStructured()=%d chunks", len(flat), len(structured))
+	}
+	for i := range flat {
+		if i >= len(structured) {
+			break
+		}
+		if flat[i] != structured[i].Text {
+			t.Errorf("chunk %d text mismatch:\n  Chunk:          %q\n  ChunkStructured: %q", i, flat[i], structured[i].Text)
+		}
+	}
+}
+
+func TestSegKindString(t *testing.T) {
+	tests := []struct {
+		kind segmentKind
+		want string
+	}{
+		{segPlain, "prose"},
+		{segHeading, "prose"},
+		{segCodeBlock, "code"},
+		{segListBlock, "list"},
+		{segTableBlock, "table"},
+	}
+	for _, tc := range tests {
+		got := segKindString(tc.kind)
+		if got != tc.want {
+			t.Errorf("segKindString(%d) = %q, want %q", tc.kind, got, tc.want)
+		}
+	}
+}

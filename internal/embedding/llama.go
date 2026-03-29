@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -21,6 +23,7 @@ type LlamaEmbedder struct {
 	serverURL string
 	dim       int
 	client    *http.Client
+	closeOnce sync.Once
 }
 
 // NewLlamaEmbedder starts llama-server with the given GGUF model.
@@ -47,6 +50,9 @@ func NewLlamaEmbedder(modelPath string, dim int) (*LlamaEmbedder, error) {
 	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	// Put llama-server in its own process group so we can kill the group
+	// and ensure no children outlive the daemon.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
@@ -199,8 +205,36 @@ func (e *LlamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]flo
 func (e *LlamaEmbedder) Dim() int { return e.dim }
 
 func (e *LlamaEmbedder) Close() error {
-	if e.cmd != nil && e.cmd.Process != nil {
-		return e.cmd.Process.Kill()
-	}
-	return nil
+	var err error
+	e.closeOnce.Do(func() {
+		if e.cmd == nil || e.cmd.Process == nil {
+			return
+		}
+		// Kill the entire process group (llama-server + any children).
+		pgid, pgErr := syscall.Getpgid(e.cmd.Process.Pid)
+		if pgErr == nil {
+			// Negative PID = signal the process group.
+			syscall.Kill(-pgid, syscall.SIGTERM)
+		} else {
+			e.cmd.Process.Signal(syscall.SIGTERM)
+		}
+
+		// Give it a moment to exit cleanly, then force-kill.
+		done := make(chan struct{})
+		go func() {
+			e.cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			if pgErr == nil {
+				syscall.Kill(-pgid, syscall.SIGKILL)
+			} else {
+				e.cmd.Process.Kill()
+			}
+			<-done // reap
+		}
+	})
+	return err
 }

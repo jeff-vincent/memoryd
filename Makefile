@@ -1,4 +1,4 @@
-.PHONY: build tray app run clean release
+.PHONY: build tray app run clean release validate corpus-eval
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION) -s -w
@@ -17,6 +17,12 @@ run: build
 
 clean:
 	rm -rf bin/ dist/
+
+validate:
+	go run ./cmd/validate
+
+corpus-eval:
+	go run ./cmd/corpus-eval
 
 release: clean
 	mkdir -p dist

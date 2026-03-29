@@ -2,6 +2,8 @@ bin/
 dist/
 /memoryd
 /memoryd-tray
+/corpus-eval
+/validate
 stress
 models/*.gguf
 .memoryd/

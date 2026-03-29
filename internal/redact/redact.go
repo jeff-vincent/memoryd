@@ -48,6 +48,13 @@ func Clean(text string) string {
 }
 
 func redactKeyValueLine(line string) string {
+	// Work only on ASCII lines to avoid byte-offset mismatches between the
+	// ToLower'd copy and the original when multibyte UTF-8 characters are present.
+	for _, b := range []byte(line) {
+		if b > 0x7e {
+			return line
+		}
+	}
 	lower := strings.ToLower(line)
 	for _, kw := range sensitiveKeywords {
 		idx := strings.Index(lower, kw)

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/memory-daemon/memoryd/internal/embedding"
 	"github.com/memory-daemon/memoryd/internal/quality"
 	"github.com/memory-daemon/memoryd/internal/store"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -32,6 +34,9 @@ type Config struct {
 
 	// Max memories to scan per sweep (default 500). Keeps each cycle bounded.
 	BatchSize int
+
+	// NowFunc overrides time.Now() for testing. If nil, uses time.Now.
+	NowFunc func() time.Time
 }
 
 // DefaultConfig returns sensible defaults.
@@ -73,8 +78,9 @@ func (s Stats) String() string {
 
 // Steward is a long-running background service that maintains memory quality.
 type Steward struct {
-	cfg   Config
-	store StewardStore
+	cfg      Config
+	store    StewardStore
+	embedder embedding.Embedder
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -84,14 +90,25 @@ type Steward struct {
 }
 
 // New creates a steward. Call Start() to begin the background loop.
-func New(cfg Config, s StewardStore) *Steward {
+// The embedder is optional — if nil, merges will keep the longer memory
+// rather than combining content (no re-embedding available).
+func New(cfg Config, s StewardStore, emb embedding.Embedder) *Steward {
 	if cfg.Interval == 0 {
 		cfg = DefaultConfig()
 	}
 	return &Steward{
-		cfg:   cfg,
-		store: s,
+		cfg:      cfg,
+		store:    s,
+		embedder: emb,
 	}
+}
+
+// now returns the current time, using NowFunc if configured.
+func (s *Steward) now() time.Time {
+	if s.cfg.NowFunc != nil {
+		return s.cfg.NowFunc()
+	}
+	return time.Now()
 }
 
 // Start begins the steward loop in a background goroutine.
@@ -115,6 +132,13 @@ func (s *Steward) LastStats() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lastStats
+}
+
+// Sweep runs a single scoring + pruning + merging cycle synchronously.
+// Useful for testing and validation where you want direct control.
+func (s *Steward) Sweep(ctx context.Context) Stats {
+	s.sweep(ctx)
+	return s.LastStats()
 }
 
 func (s *Steward) loop(ctx context.Context) {
@@ -202,7 +226,7 @@ func (s *Steward) scoreMemories(ctx context.Context) (int, error) {
 		}
 	}
 
-	now := time.Now()
+	now := s.now()
 	scored := 0
 
 	for _, m := range memories {
@@ -262,7 +286,7 @@ func (s *Steward) pruneMemories(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("listing for prune: %w", err)
 	}
 
-	now := time.Now()
+	now := s.now()
 	pruned := 0
 
 	for _, m := range memories {
@@ -300,8 +324,9 @@ func (s *Steward) pruneMemories(ctx context.Context) (int, error) {
 }
 
 // mergeNearDuplicates finds pairs of memories with high cosine similarity
-// and keeps the one with the higher hit_count, deleting the other.
-// This is the heavy phase — it uses VectorSearch per memory, so we limit scope.
+// and consolidates them. When an embedder is available, the two memories'
+// content is combined and re-embedded so that the merged memory is richer
+// than either original. Without an embedder, we keep the longer memory.
 func (s *Steward) mergeNearDuplicates(ctx context.Context) (int, error) {
 	// Only scan a subset to keep each sweep bounded.
 	scanLimit := s.cfg.BatchSize
@@ -349,10 +374,23 @@ func (s *Steward) mergeNearDuplicates(ctx context.Context) (int, error) {
 				continue
 			}
 
-			// Keep the memory with more hits. On tie, keep the older one.
+			// Decide which memory to keep and which to absorb.
 			keep, drop := m, n
 			if n.HitCount > m.HitCount || (n.HitCount == m.HitCount && n.CreatedAt.Before(m.CreatedAt)) {
 				keep, drop = n, m
+			}
+
+			// Try to combine content if the drop has unique information.
+			if s.embedder != nil && !isSubstring(keep.Content, drop.Content) {
+				combined := combineContent(keep.Content, drop.Content)
+				vec, err := s.embedder.Embed(ctx, combined)
+				if err != nil {
+					log.Printf("[steward] re-embed failed during merge, keeping longer: %v", err)
+				} else {
+					if err := s.store.UpdateContent(ctx, keep.ID.Hex(), combined, vec); err != nil {
+						log.Printf("[steward] update content failed for %s: %v", keep.ID.Hex(), err)
+					}
+				}
 			}
 
 			if err := s.store.Delete(ctx, drop.ID.Hex()); err != nil {
@@ -362,10 +400,71 @@ func (s *Steward) mergeNearDuplicates(ctx context.Context) (int, error) {
 
 			deleted[drop.ID] = true
 			merged++
-			log.Printf("[steward] merged: kept %s (hits=%d) dropped %s (hits=%d, sim=%.3f)",
+			log.Printf("[steward] merged: kept %s (hits=%d) absorbed %s (hits=%d, sim=%.3f)",
 				keep.ID.Hex(), keep.HitCount, drop.ID.Hex(), drop.HitCount, n.Score)
 		}
 	}
 
 	return merged, nil
+}
+
+// isSubstring returns true if the shorter text is wholly contained in the longer.
+func isSubstring(a, b string) bool {
+	if len(a) >= len(b) {
+		return strings.Contains(a, b)
+	}
+	return strings.Contains(b, a)
+}
+
+// combineContent merges two similar memories into one. When the texts overlap
+// heavily (one is a prefix/suffix of the other), we extend rather than
+// concatenate. Otherwise, we join with a clear separator, keeping the longer
+// text first for coherence.
+func combineContent(keep, drop string) string {
+	// If drop is already contained in keep, nothing to add.
+	if strings.Contains(keep, drop) {
+		return keep
+	}
+	// If keep is contained in drop, the drop is the richer version.
+	if strings.Contains(drop, keep) {
+		return drop
+	}
+
+	// Look for a suffix/prefix overlap (at least 20 chars) to splice.
+	if merged, ok := spliceOverlap(keep, drop, 20); ok {
+		return merged
+	}
+
+	// No overlap — concatenate with separator, longer first.
+	if len(drop) > len(keep) {
+		keep, drop = drop, keep
+	}
+	return keep + "\n\n" + drop
+}
+
+// spliceOverlap finds where the end of a overlaps the start of b (or vice
+// versa) and returns the combined text. Returns false if no overlap >= minLen.
+func spliceOverlap(a, b string, minLen int) (string, bool) {
+	// Try a's suffix overlapping b's prefix.
+	if merged, ok := trySuffix(a, b, minLen); ok {
+		return merged, true
+	}
+	// Try b's suffix overlapping a's prefix.
+	if merged, ok := trySuffix(b, a, minLen); ok {
+		return merged, true
+	}
+	return "", false
+}
+
+func trySuffix(a, b string, minLen int) (string, bool) {
+	maxCheck := len(a)
+	if maxCheck > len(b) {
+		maxCheck = len(b)
+	}
+	for i := maxCheck; i >= minLen; i-- {
+		if a[len(a)-i:] == b[:i] {
+			return a + b[i:], true
+		}
+	}
+	return "", false
 }

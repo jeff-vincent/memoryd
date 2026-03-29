@@ -370,8 +370,90 @@ func TestReadToolsAllowedInReadOnly(t *testing.T) {
 	}
 }
 
+func TestSourceUpload(t *testing.T) {
+	s, ts := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/sources/upload" || r.Method != "POST" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["name"] != "test-source" {
+			t.Errorf("expected name test-source, got %v", body["name"])
+		}
+		files, _ := body["files"].([]any)
+		if len(files) != 1 {
+			t.Errorf("expected 1 file, got %d", len(files))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"id": "src123", "message": "1 file ingested."})
+	}))
+	defer ts.Close()
+
+	resp := call(s, "tools/call", 30, map[string]any{
+		"name": "source_upload",
+		"arguments": map[string]any{
+			"name": "test-source",
+			"files": []any{
+				map[string]any{"filename": "notes.md", "content": "# Hello"},
+			},
+		},
+	})
+	if resp.Error != nil {
+		t.Fatalf("expected no error, got %v", resp.Error)
+	}
+	result := resp.Result.(map[string]any)
+	if result["isError"].(bool) {
+		content := result["content"].([]map[string]any)
+		t.Fatalf("unexpected error: %v", content[0]["text"])
+	}
+	content := result["content"].([]map[string]any)
+	text := content[0]["text"].(string)
+	if text == "" {
+		t.Error("expected non-empty success message")
+	}
+}
+
+func TestSourceUploadMissingName(t *testing.T) {
+	s := &Server{baseURL: "http://unused", client: &http.Client{}}
+	resp := call(s, "tools/call", 31, map[string]any{
+		"name":      "source_upload",
+		"arguments": map[string]any{"files": []any{}},
+	})
+	result := resp.Result.(map[string]any)
+	if !result["isError"].(bool) {
+		t.Error("expected isError=true for missing name")
+	}
+}
+
+func TestSourceUploadMissingFiles(t *testing.T) {
+	s := &Server{baseURL: "http://unused", client: &http.Client{}}
+	resp := call(s, "tools/call", 32, map[string]any{
+		"name":      "source_upload",
+		"arguments": map[string]any{"name": "test"},
+	})
+	result := resp.Result.(map[string]any)
+	if !result["isError"].(bool) {
+		t.Error("expected isError=true for missing files")
+	}
+}
+
+func TestSourceUploadEmptyFiles(t *testing.T) {
+	s := &Server{baseURL: "http://unused", client: &http.Client{}}
+	resp := call(s, "tools/call", 33, map[string]any{
+		"name": "source_upload",
+		"arguments": map[string]any{
+			"name":  "test",
+			"files": []any{},
+		},
+	})
+	result := resp.Result.(map[string]any)
+	if !result["isError"].(bool) {
+		t.Error("expected isError=true for empty files array")
+	}
+}
+
 func TestNewServerReadOnly(t *testing.T) {
-	s := NewServer(7432, true)
+	s := NewServer(7432, true, "")
 	if !s.readOnly {
 		t.Error("expected readOnly=true")
 	}
@@ -381,7 +463,7 @@ func TestNewServerReadOnly(t *testing.T) {
 }
 
 func TestNewServerReadWrite(t *testing.T) {
-	s := NewServer(7432, false)
+	s := NewServer(7432, false, "")
 	if s.readOnly {
 		t.Error("expected readOnly=false")
 	}

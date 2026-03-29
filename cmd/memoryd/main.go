@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/credential"
 	"github.com/memory-daemon/memoryd/internal/embedding"
 	"github.com/memory-daemon/memoryd/internal/export"
 	"github.com/memory-daemon/memoryd/internal/ingest"
@@ -28,8 +29,10 @@ import (
 	"github.com/memory-daemon/memoryd/internal/pipeline"
 	"github.com/memory-daemon/memoryd/internal/proxy"
 	"github.com/memory-daemon/memoryd/internal/quality"
+	"github.com/memory-daemon/memoryd/internal/rejection"
 	"github.com/memory-daemon/memoryd/internal/steward"
 	"github.com/memory-daemon/memoryd/internal/store"
+	"github.com/memory-daemon/memoryd/internal/synthesizer"
 )
 
 var version = "dev"
@@ -53,6 +56,8 @@ func main() {
 		uploadCmd(),
 		sourcesCmd(),
 		exportCmd(),
+		credentialsCmd(),
+		tokenCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -74,10 +79,22 @@ func startCmd() *cobra.Command {
 				return err
 			}
 
+			token, err := config.EnsureToken()
+			if err != nil {
+				log.Printf("warning: could not create API token: %v — local API will be unprotected", err)
+			}
+			cfg.APIToken = token
+
 			registerMCPServers()
 
 			if cfg.MongoDBAtlasURI == "" {
-				return fmt.Errorf("mongodb_atlas_uri is required -- edit %s", config.Path())
+				return fmt.Errorf("mongodb_atlas_uri is not configured.\n\n"+
+					"  1. Edit %s and set mongodb_atlas_uri to your connection string, OR\n"+
+					"  2. Store it securely: memoryd credentials set-uri \"mongodb+srv://...\"\n\n"+
+					"  For local development with Docker:\n"+
+					"    docker run -d --name memoryd-mongo -p 27017:27017 mongodb/mongodb-atlas-local:8.0\n"+
+					"    Then set: mongodb_atlas_uri: \"mongodb://localhost:27017/?directConnection=true\"",
+					config.Path())
 			}
 
 			// Stop any existing daemon on this port.
@@ -150,6 +167,14 @@ func startCmd() *cobra.Command {
 
 			primary := multi.Primary()
 
+			// Verify vector index exists on primary database.
+			if err := primary.Mongo.CheckVectorIndex(ctx); err != nil {
+				log.Printf("WARNING: %v", err)
+				log.Println("memoryd will start, but vector search will not work until the index is created.")
+			} else {
+				log.Println("  vector_index verified")
+			}
+
 			// 2. Start the embedding model
 			log.Println("Loading embedding model...")
 			emb, err := embedding.NewLlamaEmbedder(cfg.ModelPath, cfg.EmbeddingDim)
@@ -164,23 +189,83 @@ func startCmd() *cobra.Command {
 			qt := quality.NewTracker(primary.Mongo, quality.DefaultThreshold)
 			read := pipeline.NewReadPipeline(emb, multi, cfg, pipeline.WithQualityTracker(qt))
 
-			scorer, err := quality.NewContentScorer(ctx, emb)
+			scorer, err := quality.NewContentScorerWithProtos(ctx, emb, cfg.Pipeline.QualityProtos, cfg.Pipeline.NoiseProtos)
 			if err != nil {
 				log.Printf("warning: content scorer unavailable, chunks will not be quality-scored: %v", err)
 			}
-			write := pipeline.NewWritePipeline(emb, primary.Store, pipeline.WithContentScorer(scorer))
 
-			// 4. Build ingester (operates on primary database)
-			ing := ingest.NewIngester(emb, primary.Mongo, primary.Mongo)
+			// Build LLM synthesizer when explicitly enabled in config AND
+			// an Anthropic API key is available (keychain or env var). Without
+			// both, topic groups fall back to "\n\n" joining and Q&A pairing
+			// stores plain responses.
+			var synth *synthesizer.Synthesizer
+			if cfg.LLMSynthesis {
+				apiKey := config.GetAnthropicAPIKey()
+				synth = synthesizer.New(apiKey, cfg.UpstreamAnthropicURL)
+				if synth.Available() {
+					log.Printf("LLM synthesis enabled (model: claude-haiku-4-5-20251001)")
+				} else {
+					log.Printf("LLM synthesis: enabled in config but no Anthropic API key found — disabled")
+					log.Printf("  Set via: tray app → Set Anthropic API Key, or ANTHROPIC_API_KEY env var")
+				}
+			} else {
+				synth = synthesizer.New("", "")
+				log.Printf("LLM synthesis disabled (set llm_synthesis: true in config to enable)")
+			}
 
-			// 5. Start the proxy
-			srv := proxy.NewServer(cfg, read, write,
-				proxy.WithStore(multi),
-				proxy.WithSourceStore(primary.Mongo),
-				proxy.WithIngester(ing),
-				proxy.WithQuality(qt),
-				proxy.WithEmbedder(emb),
+			write := pipeline.NewWritePipeline(emb, primary.Store,
+				pipeline.WithContentScorer(scorer),
+				pipeline.WithSynthesizer(synth),
+				pipeline.WithPipelineConfig(cfg.Pipeline),
 			)
+
+			// 5a. Open rejection store — bounded ring buffer persisted across
+			// restarts. Accumulated entries are used as learned noise prototypes
+			// to keep the ContentScorer calibrated to real rejection patterns.
+			rejStorePath := filepath.Join(config.Dir(), "rejection_log.jsonl")
+			rejLog, err := rejection.Open(rejStorePath, 0) // 0 = DefaultMaxSize (500)
+			if err != nil {
+				log.Printf("warning: could not open rejection store: %v", err)
+			} else {
+				log.Printf("rejection store: %s (%d entries)", rejStorePath, rejLog.Len())
+			}
+
+			// 5b. Scorer rebuild goroutine: when the rejection store accumulates
+			// enough new entries it signals on RebuildCh. Re-embed the stored
+			// assistant texts as noise prototypes and hot-swap the scorer.
+			if rejLog != nil {
+				go func() {
+					// Seed scorer from existing entries on startup.
+					if rejLog.Len() > 0 {
+						texts := rejLog.Texts()
+						if s, err := quality.NewContentScorerFromRejections(ctx, emb, texts, cfg.Pipeline.QualityProtos); err == nil {
+							write.UpdateScorer(s)
+							log.Printf("[rejection] scorer seeded with %d noise prototypes from stored rejections", len(texts))
+						}
+					}
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case _, ok := <-rejLog.RebuildCh():
+							if !ok {
+								return
+							}
+							texts := rejLog.Texts()
+							s, err := quality.NewContentScorerFromRejections(ctx, emb, texts, cfg.Pipeline.QualityProtos)
+							if err != nil {
+								log.Printf("[rejection] scorer rebuild error: %v", err)
+								continue
+							}
+							write.UpdateScorer(s)
+							log.Printf("[rejection] scorer rebuilt with %d noise prototypes", len(texts))
+						}
+					}
+				}()
+			}
+
+			// 5c. Build ingester (operates on primary database)
+			ing := ingest.NewIngester(emb, primary.Mongo, primary.Mongo)
 
 			// 6. Start a steward for each writable database
 			stwCfg := steward.Config{
@@ -196,11 +281,26 @@ func startCmd() *cobra.Command {
 				if !e.IsWritable() {
 					continue
 				}
-				stw := steward.New(stwCfg, e.Mongo)
+				stw := steward.New(stwCfg, e.Mongo, emb)
 				stw.Start(ctx)
 				stewards = append(stewards, stw)
 				log.Printf("  [%s] steward started", e.Name)
 			}
+
+			// 7. Start the proxy (after stewards, so we can expose their stats)
+			serverOpts := []proxy.ServerOption{
+				proxy.WithStore(multi),
+				proxy.WithSourceStore(primary.Mongo),
+				proxy.WithIngester(ing),
+				proxy.WithQuality(qt),
+				proxy.WithEmbedder(emb),
+				proxy.WithSynthesizer(synth),
+				proxy.WithRejectionLog(rejLog),
+			}
+			if len(stewards) > 0 {
+				serverOpts = append(serverOpts, proxy.WithStewardStats(&stewardAdapter{stewards: stewards}))
+			}
+			srv := proxy.NewServer(cfg, version, read, write, serverOpts...)
 
 			// Graceful shutdown on SIGINT / SIGTERM
 			sigCh := make(chan os.Signal, 1)
@@ -209,13 +309,29 @@ func startCmd() *cobra.Command {
 			go func() {
 				<-sigCh
 				log.Println("Shutting down...")
+
+				// 1. Stop accepting new requests; drain in-flight with a deadline.
+				shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer shutCancel()
+				if err := srv.Shutdown(shutCtx); err != nil {
+					log.Printf("server shutdown error: %v", err)
+				}
+
+				// 2. Stop background workers.
 				for _, stw := range stewards {
 					stw.Stop()
 				}
-				if err := srv.Stop(); err != nil {
-					log.Printf("server stop error: %v", err)
+				cancel() // unblocks the scorer rebuild goroutine via ctx.Done()
+
+				// 3. Flush rejection log.
+				if rejLog != nil {
+					rejLog.Close()
 				}
-				cancel()
+
+				// 4. Kill embedding subprocess explicitly so it doesn't outlive us.
+				// emb.Close() is also deferred, but an explicit call here ensures the
+				// subprocess is reaped even if the tray sends SIGKILL before defers run.
+				emb.Close()
 			}()
 
 			return srv.Start()
@@ -302,7 +418,7 @@ func mcpCmd() *cobra.Command {
 			}
 			resp.Body.Close()
 
-			srv := mcp.NewServer(cfg.Port, cfg.MCPReadOnly())
+			srv := mcp.NewServer(cfg.Port, cfg.MCPReadOnly(), config.LoadToken())
 			return srv.Run()
 		},
 	}
@@ -445,6 +561,115 @@ func versionCmd() *cobra.Command {
 	}
 }
 
+func tokenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "token",
+		Short: "Print the dashboard API token",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			token, err := config.EnsureToken()
+			if err != nil {
+				return fmt.Errorf("could not load or generate token: %w", err)
+			}
+			fmt.Println(token)
+			return nil
+		},
+	}
+}
+
+func credentialsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "credentials",
+		Short: "Manage stored credentials (OS keychain)",
+	}
+
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "set-uri <mongodb_uri>",
+			Short: "Store MongoDB URI in OS keychain",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				if err := config.StoreCredential("mongodb_atlas_uri", args[0]); err != nil {
+					return fmt.Errorf("storing credential: %w", err)
+				}
+				fmt.Println("MongoDB URI stored in OS keychain.")
+				fmt.Println("Config updated to use keychain reference.")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "set-api-key <anthropic_api_key>",
+			Short: "Store Anthropic API key in OS keychain",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				if err := credential.Set("anthropic_api_key", args[0]); err != nil {
+					return fmt.Errorf("storing credential: %w", err)
+				}
+				fmt.Println("Anthropic API key stored in OS keychain.")
+				fmt.Println("Restart the daemon to pick it up.")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "clear",
+			Short: "Remove all memoryd credentials from OS keychain",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				config.DeleteCredentials()
+				fmt.Println("All memoryd credentials removed from OS keychain.")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "check",
+			Short: "Check if credentials are stored in OS keychain",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				uri, err := credential.Get("mongodb_atlas_uri")
+				if err != nil {
+					fmt.Println("Keychain: not available (", err, ")")
+					return nil
+				}
+				if uri == "" {
+					fmt.Println("Keychain: no MongoDB URI stored")
+				} else {
+					masked := uri
+					if len(uri) > 20 {
+						masked = uri[:20] + "..." + uri[len(uri)-4:]
+					}
+					fmt.Printf("Keychain: MongoDB URI stored (%s)\n", masked)
+				}
+
+				apiKey, _ := credential.Get("anthropic_api_key")
+				if apiKey == "" {
+					fmt.Println("Keychain: no Anthropic API key stored")
+				} else {
+					masked := apiKey
+					if len(apiKey) > 12 {
+						masked = apiKey[:7] + "••••" + apiKey[len(apiKey)-4:]
+					}
+					fmt.Printf("Keychain: Anthropic API key stored (%s)\n", masked)
+				}
+				return nil
+			},
+		},
+	)
+
+	return cmd
+}
+
+// daemonRequest creates an HTTP request to the local daemon with the API token set.
+func daemonRequest(method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if token := config.LoadToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
 // connectStore creates a direct Atlas connection for CLI commands.
 func connectStore() (*store.MongoStore, error) {
 	cfg, err := config.Load()
@@ -494,11 +719,8 @@ func ingestCmd() *cobra.Command {
 			}
 			body, _ := json.Marshal(payload)
 
-			resp, err := http.Post(
-				fmt.Sprintf("http://127.0.0.1:%d/api/sources", cfg.Port),
-				"application/json",
-				bytes.NewReader(body),
-			)
+			req, _ := daemonRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/sources", cfg.Port), bytes.NewReader(body))
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return fmt.Errorf("daemon not running -- start it with: memoryd start")
 			}
@@ -598,11 +820,8 @@ func uploadCmd() *cobra.Command {
 			payload := map[string]any{"name": name, "files": files}
 			body, _ := json.Marshal(payload)
 
-			resp, err := http.Post(
-				fmt.Sprintf("http://127.0.0.1:%d/api/sources/upload", cfg.Port),
-				"application/json",
-				bytes.NewReader(body),
-			)
+			req, _ := daemonRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/sources/upload", cfg.Port), bytes.NewReader(body))
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return fmt.Errorf("daemon not running -- start it with: memoryd start")
 			}
@@ -634,7 +853,8 @@ func sourcesCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/sources", cfg.Port))
+			req, _ := daemonRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/api/sources", cfg.Port), nil)
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return fmt.Errorf("daemon not running -- start it with: memoryd start")
 			}
@@ -667,7 +887,7 @@ func sourcesCmd() *cobra.Command {
 				return err
 			}
 
-			req, _ := http.NewRequest("DELETE",
+			req, _ := daemonRequest("DELETE",
 				fmt.Sprintf("http://127.0.0.1:%d/api/sources/%s", cfg.Port, args[0]), nil)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -712,4 +932,24 @@ func exportCmd() *cobra.Command {
 	cmd.Flags().StringP("output", "o", "memoryd-export", "Output directory for the doc set")
 	cmd.Flags().Float64("min-quality", 0, "Only include memories with quality_score >= this value (0 = all)")
 	return cmd
+}
+
+// stewardAdapter bridges steward.Steward to the proxy.StewardStatsProvider
+// interface by aggregating stats from all active stewards.
+type stewardAdapter struct {
+	stewards []*steward.Steward
+}
+
+func (a *stewardAdapter) LastSweep() proxy.SweepStats {
+	var total proxy.SweepStats
+	for _, s := range a.stewards {
+		st := s.LastStats()
+		total.Scored += st.Scored
+		total.Pruned += st.Pruned
+		total.Merged += st.Merged
+		if st.Elapsed > total.Elapsed {
+			total.Elapsed = st.Elapsed
+		}
+	}
+	return total
 }

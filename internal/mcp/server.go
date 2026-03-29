@@ -17,14 +17,53 @@ type Server struct {
 	baseURL  string
 	client   *http.Client
 	readOnly bool
+	token    string
 }
 
-func NewServer(port int, readOnly bool) *Server {
+func NewServer(port int, readOnly bool, token string) *Server {
 	return &Server{
 		baseURL:  fmt.Sprintf("http://127.0.0.1:%d", port),
 		client:   &http.Client{},
 		readOnly: readOnly,
+		token:    token,
 	}
+}
+
+// apiPost sends an authenticated POST request to the daemon.
+func (s *Server) apiPost(url, contentType string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
+	return s.client.Do(req)
+}
+
+// apiGet sends an authenticated GET request to the daemon.
+func (s *Server) apiGet(url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
+	return s.client.Do(req)
+}
+
+// apiDelete sends an authenticated DELETE request to the daemon.
+func (s *Server) apiDelete(url string) (*http.Response, error) {
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
+	return s.client.Do(req)
 }
 
 // Run reads JSON-RPC messages from stdin and writes responses to stdout.
@@ -378,7 +417,7 @@ func (s *Server) callSearch(args map[string]any) (string, bool) {
 	}
 
 	body, _ := json.Marshal(payload)
-	resp, err := s.client.Post(s.url("/api/search"), "application/json", bytes.NewReader(body))
+	resp, err := s.apiPost(s.url("/api/search"), "application/json", body)
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -410,7 +449,7 @@ func (s *Server) callStore(args map[string]any) (string, bool) {
 	}
 
 	body, _ := json.Marshal(map[string]string{"content": content, "source": source})
-	resp, err := s.client.Post(s.url("/api/store"), "application/json", bytes.NewReader(body))
+	resp, err := s.apiPost(s.url("/api/store"), "application/json", body)
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -439,7 +478,7 @@ func (s *Server) callList(args map[string]any) (string, bool) {
 		url += "?q=" + query
 	}
 
-	resp, err := s.client.Get(url)
+	resp, err := s.apiGet(url)
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -475,8 +514,7 @@ func (s *Server) callDelete(args map[string]any) (string, bool) {
 		return "id is required", true
 	}
 
-	req, _ := http.NewRequest("DELETE", s.url("/api/memories/"+id), nil)
-	resp, err := s.client.Do(req)
+	resp, err := s.apiDelete(s.url("/api/memories/" + id))
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -518,7 +556,7 @@ func (s *Server) callSourceIngest(args map[string]any) (string, bool) {
 	}
 
 	body, _ := json.Marshal(payload)
-	resp, err := s.client.Post(s.url("/api/sources"), "application/json", bytes.NewReader(body))
+	resp, err := s.apiPost(s.url("/api/sources"), "application/json", body)
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -562,7 +600,7 @@ func (s *Server) callSourceUpload(args map[string]any) (string, bool) {
 
 	payload := map[string]any{"name": name, "files": files}
 	body, _ := json.Marshal(payload)
-	resp, err := s.client.Post(s.url("/api/sources/upload"), "application/json", bytes.NewReader(body))
+	resp, err := s.apiPost(s.url("/api/sources/upload"), "application/json", body)
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -579,7 +617,7 @@ func (s *Server) callSourceUpload(args map[string]any) (string, bool) {
 }
 
 func (s *Server) callSourceList(args map[string]any) (string, bool) {
-	resp, err := s.client.Get(s.url("/api/sources"))
+	resp, err := s.apiGet(s.url("/api/sources"))
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -606,8 +644,7 @@ func (s *Server) callSourceRemove(args map[string]any) (string, bool) {
 		return "id is required", true
 	}
 
-	req, _ := http.NewRequest("DELETE", s.url("/api/sources/"+id), nil)
-	resp, err := s.client.Do(req)
+	resp, err := s.apiDelete(s.url("/api/sources/" + id))
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -621,7 +658,7 @@ func (s *Server) callSourceRemove(args map[string]any) (string, bool) {
 }
 
 func (s *Server) callQualityStats(args map[string]any) (string, bool) {
-	resp, err := s.client.Get(s.url("/api/quality"))
+	resp, err := s.apiGet(s.url("/api/quality"))
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}
@@ -639,7 +676,7 @@ func (s *Server) callQualityStats(args map[string]any) (string, bool) {
 }
 
 func (s *Server) callDatabaseList(args map[string]any) (string, bool) {
-	resp, err := s.client.Get(s.url("/api/databases"))
+	resp, err := s.apiGet(s.url("/api/databases"))
 	if err != nil {
 		return fmt.Sprintf("daemon not reachable: %v (is memoryd running?)", err), true
 	}

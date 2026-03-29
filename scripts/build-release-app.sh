@@ -40,4 +40,7 @@ cat > "$APP/Contents/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
+# Ad-hoc codesign the bundle so macOS doesn't reject it.
+codesign --force --deep -s - "$APP"
+
 echo "Built $APP"

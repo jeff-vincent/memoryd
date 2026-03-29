@@ -20,6 +20,9 @@ import (
 // tag it as extending that source rather than creating a standalone entry.
 const SourceExtensionThreshold = 0.75
 
+// minSectionLen is the minimum character length for a section entry to be stored.
+const minSectionLen = 30
+
 // Ingester crawls a URL and stores the content as source-attributed memories.
 type Ingester struct {
 	embedder    embedding.Embedder
@@ -83,31 +86,24 @@ func (ing *Ingester) IngestSource(ctx context.Context, src store.Source) error {
 			}
 		}
 
-		// Chunk and embed the page content.
-		chunks := chunker.Chunk(page.Content, chunker.DefaultMaxTokens)
-		var validChunks []string
-		for _, chunk := range chunks {
-			if len(strings.TrimSpace(chunk)) < 30 {
-				continue
-			}
-			validChunks = append(validChunks, redact.Clean(chunk))
-		}
-
-		if len(validChunks) == 0 {
+		// Produce section-level entries from structured chunks.
+		sections := buildSections(page.Content)
+		if len(sections) == 0 {
 			continue
 		}
 
-		vecs, err := ing.embedder.EmbedBatch(ctx, validChunks)
+		vecs, err := ing.embedder.EmbedBatch(ctx, sections)
 		if err != nil {
 			log.Printf("[ingest] batch embed error for %s: %v", page.URL, err)
 			continue
 		}
 
-		for i, chunk := range validChunks {
+		pageSource := sourceLabel + "|" + page.URL
+		for i, section := range sections {
 			mem := store.Memory{
-				Content:   chunk,
+				Content:   section,
 				Embedding: vecs[i],
-				Source:    sourceLabel + "|" + page.URL,
+				Source:    pageSource,
 				Metadata: map[string]any{
 					"source_name": src.Name,
 					"page_url":    page.URL,
@@ -119,6 +115,7 @@ func (ing *Ingester) IngestSource(ctx context.Context, src store.Source) error {
 			}
 			memoryCount++
 		}
+		log.Printf("[ingest] stored %d section(s) from %s", len(sections), page.URL)
 
 		// Record the page for change detection.
 		if err := ing.sourceStore.UpsertSourcePage(ctx, store.SourcePage{
@@ -201,27 +198,20 @@ func (ing *Ingester) IngestFiles(ctx context.Context, src store.Source, files []
 			}
 		}
 
-		chunks := chunker.Chunk(content, chunker.DefaultMaxTokens)
-		var validChunks []string
-		for _, chunk := range chunks {
-			if len(strings.TrimSpace(chunk)) < 30 {
-				continue
-			}
-			validChunks = append(validChunks, redact.Clean(chunk))
-		}
-		if len(validChunks) == 0 {
+		sections := buildSections(content)
+		if len(sections) == 0 {
 			continue
 		}
 
-		vecs, err := ing.embedder.EmbedBatch(ctx, validChunks)
+		vecs, err := ing.embedder.EmbedBatch(ctx, sections)
 		if err != nil {
 			log.Printf("[ingest] batch embed error for %s: %v", f.Filename, err)
 			continue
 		}
 
-		for i, chunk := range validChunks {
+		for i, section := range sections {
 			mem := store.Memory{
-				Content:   chunk,
+				Content:   section,
 				Embedding: vecs[i],
 				Source:    fileLabel,
 				Metadata: map[string]any{
@@ -252,4 +242,73 @@ func (ing *Ingester) IngestFiles(ctx context.Context, src store.Source, files []
 
 	log.Printf("[ingest] done: %d files, %d memories stored for %s", len(files), memoryCount, src.Name)
 	return nil
+}
+
+// buildSections converts page content into section-level memory entries.
+// Consecutive chunks under the same heading are joined into a single entry
+// prefixed with "## {Heading}\n\n". This produces coherent, self-contained
+// memories rather than raw sub-paragraph fragments.
+func buildSections(content string) []string {
+	segments := chunker.ChunkStructured(content, chunker.DefaultMaxTokens)
+	if len(segments) == 0 {
+		return nil
+	}
+	grouped := groupByHeading(segments)
+	var result []string
+	for _, s := range grouped {
+		s = redact.Clean(strings.TrimSpace(s))
+		if len(s) >= minSectionLen {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// groupByHeading collapses consecutive segments that share the same heading
+// into a single formatted entry. Each group becomes one memory:
+//
+//	## Heading
+//
+//	chunk text 1
+//
+//	chunk text 2
+//
+// Segments without a heading are stored individually.
+func groupByHeading(segments []chunker.ChunkedSegment) []string {
+	if len(segments) == 0 {
+		return nil
+	}
+
+	var result []string
+	currentHeading := segments[0].Heading
+	var currentChunks []string
+
+	flush := func() {
+		if len(currentChunks) == 0 {
+			return
+		}
+		var sb strings.Builder
+		if currentHeading != "" {
+			sb.WriteString("## ")
+			sb.WriteString(currentHeading)
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(strings.Join(currentChunks, "\n\n"))
+		result = append(result, sb.String())
+		currentChunks = nil
+	}
+
+	for _, seg := range segments {
+		if seg.Heading != currentHeading {
+			flush()
+			currentHeading = seg.Heading
+		}
+		text := strings.TrimSpace(seg.Text)
+		if text != "" {
+			currentChunks = append(currentChunks, text)
+		}
+	}
+	flush()
+
+	return result
 }
