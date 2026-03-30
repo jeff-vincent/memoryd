@@ -36,7 +36,7 @@ func scenarioStewardBatchLimit(ctx context.Context) error {
 	for i := 0; i < totalMemories; i++ {
 		content := fmt.Sprintf("Unique technical note %d: this memory describes a specific implementation detail about component number %d in the memoryd pipeline.", i, i)
 		vec, _ := emb.Embed(ctx, content)
-		st.Insert(ctx, store.Memory{
+		_ = st.Insert(ctx, store.Memory{
 			ID:        primitive.NewObjectID(),
 			Content:   content,
 			Embedding: vec,
@@ -179,7 +179,7 @@ func scenarioStewardMergeWinner(ctx context.Context) error {
 	const winnerHits = 12
 	const loserHits = 3
 
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID:            primitive.NewObjectID(),
 		Content:       content,
 		Embedding:     vec,
@@ -188,7 +188,7 @@ func scenarioStewardMergeWinner(ctx context.Context) error {
 		HitCount:      winnerHits,
 		LastRetrieved: baseTime.Add(-1 * time.Hour),
 	})
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID:        primitive.NewObjectID(),
 		Content:   content,
 		Embedding: vec,
@@ -256,7 +256,7 @@ func scenarioStewardGracePeriodProtection(ctx context.Context) error {
 	// Memory created right now — within grace period.
 	newContent := "This memory was just created and is within the grace period protection window."
 	vec, _ := emb.Embed(ctx, newContent)
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID:        primitive.NewObjectID(),
 		Content:   newContent,
 		Embedding: vec,
@@ -268,7 +268,7 @@ func scenarioStewardGracePeriodProtection(ctx context.Context) error {
 	// Memory created 2 days ago — outside grace period, should be pruned.
 	oldContent := "This memory is old and has no retrieval hits so it should be pruned by the steward."
 	oldVec, _ := emb.Embed(ctx, oldContent)
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID:        primitive.NewObjectID(),
 		Content:   oldContent,
 		Embedding: oldVec,
