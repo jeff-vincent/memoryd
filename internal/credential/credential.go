@@ -54,7 +54,7 @@ func Delete(key string) error {
 
 func darwinSet(key, value string) error {
 	// Delete first to avoid "already exists" errors on update.
-	darwinDelete(key)
+	_ = darwinDelete(key)
 
 	cmd := exec.Command("/usr/bin/security", "add-generic-password",
 		"-s", serviceName,

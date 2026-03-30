@@ -131,7 +131,7 @@ func (s *Store) Add(stage, userMsg, asstMsg string) {
 	s.mu.Unlock()
 
 	// Persist asynchronously so the hot path is not blocked.
-	go persistJSONL(s.path, entries)
+	go func() { _ = persistJSONL(s.path, entries) }()
 
 	if shouldSignal {
 		// Non-blocking: if the channel already has an item, the receiver hasn't

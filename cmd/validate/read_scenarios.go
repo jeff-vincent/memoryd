@@ -59,11 +59,11 @@ func scenarioReadRanking(ctx context.Context) error {
 	highVec, _ := emb.Embed(ctx, highContent)
 	lowVec, _ := emb.Embed(ctx, lowContent)
 
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID: primitive.NewObjectID(), Content: highContent, Embedding: highVec,
 		Source: "validate", CreatedAt: baseTime,
 	})
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID: primitive.NewObjectID(), Content: lowContent, Embedding: lowVec,
 		Source: "validate", CreatedAt: baseTime,
 	})
@@ -114,7 +114,7 @@ func scenarioReadTokenBudget(ctx context.Context) error {
 	baseTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i, c := range contents {
 		vec, _ := emb.Embed(ctx, c)
-		st.Insert(ctx, store.Memory{
+		_ = st.Insert(ctx, store.Memory{
 			ID:        primitive.NewObjectID(),
 			Content:   c,
 			Embedding: vec,
