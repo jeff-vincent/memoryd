@@ -260,6 +260,8 @@ func startCmd() *cobra.Command {
 							if s, err := quality.NewContentScorerFromRejections(ctx, emb, texts, cfg.Pipeline.QualityProtos); err == nil {
 								write.UpdateScorer(s)
 								log.Printf("[rejection] scorer seeded with %d noise prototypes from stored rejections", len(texts))
+							} else {
+								log.Printf("[rejection] FAILED to seed scorer from %d rejection texts: %v", len(texts), err)
 							}
 						}
 						for {

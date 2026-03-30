@@ -621,7 +621,7 @@ return val & "\n" & btn`, msg, buttons)
 
 	switch button {
 	case "Remove":
-		credential.Delete("anthropic_api_key")
+		_ = credential.Delete("anthropic_api_key")
 		menuItem.SetTitle("Set Anthropic API Key...")
 		exec.Command("osascript", "-e",
 			`display notification "API key removed from Keychain" with title "memoryd"`).Run()

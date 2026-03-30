@@ -49,12 +49,12 @@ func main() {
 		"retrieval": scenarioRetrieval,
 
 		// Write pipeline deep tests.
-		"boundary-filtering":   scenarioBoundaryFiltering,
-		"bulk-dedup":           scenarioBulkDedup,
-		"concurrent-writes":    scenarioConcurrentWrites,
-		"write-result-count":   scenarioWriteResultCounting,
-		"long-doc-chunking":    scenarioLongDocumentChunking,
-		"source-preservation":  scenarioSourcePreservation,
+		"boundary-filtering":  scenarioBoundaryFiltering,
+		"bulk-dedup":          scenarioBulkDedup,
+		"concurrent-writes":   scenarioConcurrentWrites,
+		"write-result-count":  scenarioWriteResultCounting,
+		"long-doc-chunking":   scenarioLongDocumentChunking,
+		"source-preservation": scenarioSourcePreservation,
 
 		// Redaction tests.
 		"redact-api-key":        scenarioRedactAPIKey,
@@ -64,11 +64,11 @@ func main() {
 		"redact-multiline":      scenarioRedactMultilineSecret,
 
 		// Read pipeline tests.
-		"read-empty-store":       scenarioReadEmptyStore,
-		"read-ranking":           scenarioReadRanking,
-		"read-token-budget":      scenarioReadTokenBudget,
-		"read-top-k":             scenarioReadTopK,
-		"read-self-retrieval":    scenarioReadQuerySelfRetrieval,
+		"read-empty-store":    scenarioReadEmptyStore,
+		"read-ranking":        scenarioReadRanking,
+		"read-token-budget":   scenarioReadTokenBudget,
+		"read-top-k":          scenarioReadTopK,
+		"read-self-retrieval": scenarioReadQuerySelfRetrieval,
 
 		// Quality scoring and tracker tests.
 		"content-scorer-range":   scenarioContentScorerRange,
@@ -77,17 +77,17 @@ func main() {
 		"tracker-hit-counting":   scenarioTrackerHitCounting,
 
 		// Steward edge cases.
-		"steward-batch-limit":       scenarioStewardBatchLimit,
-		"steward-decay-monotonic":   scenarioStewardDecayMonotonic,
-		"steward-merge-winner":      scenarioStewardMergeWinner,
-		"steward-grace-protection":  scenarioStewardGracePeriodProtection,
+		"steward-batch-limit":      scenarioStewardBatchLimit,
+		"steward-decay-monotonic":  scenarioStewardDecayMonotonic,
+		"steward-merge-winner":     scenarioStewardMergeWinner,
+		"steward-grace-protection": scenarioStewardGracePeriodProtection,
 
 		// Edge cases and stability.
-		"empty-whitespace":    scenarioEmptyAndWhitespace,
-		"unicode-content":     scenarioUnicodeContent,
-		"very-long-document":  scenarioVeryLongDocument,
-		"repeated-writes":     scenarioRepeatedIdenticalWrites,
-		"pipeline-stability":  scenarioPipelineStability,
+		"empty-whitespace":   scenarioEmptyAndWhitespace,
+		"unicode-content":    scenarioUnicodeContent,
+		"very-long-document": scenarioVeryLongDocument,
+		"repeated-writes":    scenarioRepeatedIdenticalWrites,
+		"pipeline-stability": scenarioPipelineStability,
 	}
 
 	// Order matters: build up from basic to complex.
@@ -278,7 +278,7 @@ func scenarioPruning(ctx context.Context) error {
 	cfg := steward.Config{
 		Interval:         time.Millisecond, // irrelevant — we call Sweep directly
 		PruneThreshold:   0.1,
-		PruneGracePeriod: 2 * 24 * time.Hour, // 2 days
+		PruneGracePeriod: 2 * 24 * time.Hour,  // 2 days
 		DecayHalfLife:    20 * 24 * time.Hour, // 20 days — fast enough that 60-day-old 0-hit memories drop below 0.1
 		MergeThreshold:   0.88,
 		BatchSize:        500,
@@ -456,7 +456,7 @@ func scenarioMerging(ctx context.Context) error {
 	content := "The embedding model produces 1024-dimensional vectors. These are stored as float32 arrays in MongoDB."
 	vec, _ := emb.Embed(ctx, content)
 
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID:        primitive.NewObjectID(),
 		Content:   content,
 		Embedding: vec,
@@ -465,7 +465,7 @@ func scenarioMerging(ctx context.Context) error {
 		HitCount:  5,
 	})
 
-	st.Insert(ctx, store.Memory{
+	_ = st.Insert(ctx, store.Memory{
 		ID:        primitive.NewObjectID(),
 		Content:   content, // same content
 		Embedding: vec,     // same embedding
@@ -541,7 +541,7 @@ func scenarioRetrieval(ctx context.Context) error {
 		id := primitive.NewObjectID()
 		retrievedIDs[i] = id
 		vec, _ := emb.Embed(ctx, content)
-		st.Insert(ctx, store.Memory{
+		_ = st.Insert(ctx, store.Memory{
 			ID:        id,
 			Content:   content,
 			Embedding: vec,
@@ -561,7 +561,7 @@ func scenarioRetrieval(ctx context.Context) error {
 	}
 	for _, content := range ignoredContents {
 		vec, _ := emb.Embed(ctx, content)
-		st.Insert(ctx, store.Memory{
+		_ = st.Insert(ctx, store.Memory{
 			ID:        primitive.NewObjectID(),
 			Content:   content,
 			Embedding: vec,

@@ -594,10 +594,6 @@ func writeReport(w io.Writer, runID, source string, synthesisOn bool,
 	fmt.Fprintf(w, "Top retrieval score per query after each wave (higher = more relevant).\n\n")
 
 	for _, q := range searchQueries {
-		short := q
-		if len(short) > 55 {
-			short = short[:55] + "…"
-		}
 		fmt.Fprintf(w, "### Query: _%s_\n\n", q)
 		fmt.Fprintf(w, "| After Wave | Tier | Score | Top Result Preview |\n")
 		fmt.Fprintf(w, "|------------|------|-------|--------------------|\n")

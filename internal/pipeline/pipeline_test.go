@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/memory-daemon/memoryd/internal/config"
+	"github.com/memory-daemon/memoryd/internal/quality"
 	"github.com/memory-daemon/memoryd/internal/store"
 )
 
@@ -652,5 +653,43 @@ func TestPreprocessContent_EmptyAfterStrip(t *testing.T) {
 	got := preprocessContent(in)
 	if got != "" {
 		t.Errorf("expected empty string after full strip, got %q", got)
+	}
+}
+
+func TestPreScore_NilScorer(t *testing.T) {
+	emb := &mockEmbedder{dim: 4}
+	st := &mockStore{}
+	wp := NewWritePipeline(emb, st) // no scorer attached
+
+	_, ok := wp.PreScore(context.Background(), "some text")
+	if ok {
+		t.Error("PreScore should return false when scorer is nil")
+	}
+	if emb.calls != 0 {
+		t.Error("PreScore should not call embedder when scorer is nil")
+	}
+}
+
+func TestPreScore_WithScorer(t *testing.T) {
+	emb := &mockEmbedder{dim: 4}
+	st := &mockStore{}
+
+	// Build a scorer using the mock embedder. The mock produces orthogonal
+	// vectors per call, so quality/noise prototypes will be distinct.
+	scorer, err := quality.NewContentScorer(context.Background(), emb)
+	if err != nil {
+		t.Fatalf("NewContentScorer: %v", err)
+	}
+
+	wp := NewWritePipeline(emb, st,
+		WithContentScorer(scorer),
+	)
+
+	score, ok := wp.PreScore(context.Background(), "technical content here")
+	if !ok {
+		t.Error("PreScore should return true when scorer is non-nil")
+	}
+	if score < 0 || score > 1 {
+		t.Errorf("PreScore returned out-of-range score: %f", score)
 	}
 }

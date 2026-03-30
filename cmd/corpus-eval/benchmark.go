@@ -40,7 +40,7 @@ import (
 type benchRow struct {
 	Index             int    `json:"index"`
 	Classification    string `json:"classification"` // noise | explanation | substantive
-	Stage             string `json:"stage"`          // pre_filter | synthesizer_skip | stored | noise_filtered | error
+	Stage             string `json:"stage"`          // pre_filter | length_filter | content_score_filter | synthesizer_skip | stored | noise_filtered | error
 	Stored            int    `json:"stored"`         // 0 or 1+
 	LatencyMs         int64  `json:"latency_ms"`
 	UserPromptLen     int    `json:"user_prompt_len"`
@@ -375,14 +375,16 @@ func writeBenchReport(w io.Writer, results []benchRow, classes []respClass, rows
 	for _, r := range results {
 		stageCount[r.Stage]++
 	}
-	stageOrder := []string{"stored", "synthesizer_skip", "pre_filter", "noise_filtered", "no_synthesizer", "error"}
+	stageOrder := []string{"stored", "synthesizer_skip", "pre_filter", "length_filter", "content_score_filter", "noise_filtered", "no_synthesizer", "error"}
 	stageDesc := map[string]string{
-		"stored":           "Distilled entry reached MongoDB",
-		"synthesizer_skip": "LLM judged exchange as no durable value",
-		"pre_filter":       "Cheap heuristic (ack + procedural prefix)",
-		"noise_filtered":   "Write pipeline noise gate (no synthesizer path)",
-		"no_synthesizer":   "Synthesizer unavailable, raw write",
-		"error":            "Network / API error",
+		"stored":               "Distilled entry reached MongoDB",
+		"synthesizer_skip":     "LLM judged exchange as no durable value",
+		"pre_filter":           "Cheap heuristic (ack + procedural prefix)",
+		"length_filter":        "Response too short (below ingest_min_len)",
+		"content_score_filter": "Noise score pre-gate (adaptive, pre-Haiku)",
+		"noise_filtered":       "Write pipeline noise gate (no synthesizer path)",
+		"no_synthesizer":       "Synthesizer unavailable, raw write",
+		"error":                "Network / API error",
 	}
 
 	fmt.Fprintln(w, "| Stage | Count | % | Description |")
@@ -393,7 +395,7 @@ func writeBenchReport(w io.Writer, results []benchRow, classes []respClass, rows
 		if n == 0 {
 			continue
 		}
-		if st == "pre_filter" || st == "synthesizer_skip" || st == "noise_filtered" {
+		if st == "pre_filter" || st == "synthesizer_skip" || st == "noise_filtered" || st == "length_filter" || st == "content_score_filter" {
 			totalFiltered += n
 		}
 		fmt.Fprintf(w, "| %s | %d | %.1f%% | %s |\n", st, n, pct(n, total), stageDesc[st])

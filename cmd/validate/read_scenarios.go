@@ -136,7 +136,7 @@ func scenarioReadTokenBudget(ctx context.Context) error {
 
 	maxChars := maxTokens * 4
 	if len(result) > maxChars+50 { // +50 for header/footer overhead
-		return fmt.Errorf("context length %d exceeds token budget (maxTokens=%d → maxChars=%d): %q...",
+		return fmt.Errorf("context length %d exceeds token budget (maxTokens=%d → maxChars=%d): %q",
 			len(result), maxTokens, maxChars, result[:min(100, len(result))])
 	}
 

@@ -137,7 +137,7 @@ func (a *apiHandler) handleStore(w http.ResponseWriter, r *http.Request) {
 // exchange and, if stored, the distilled entry text.
 //
 // Request: {"user_prompt": "...", "assistant_response": "...", "source": "..."}
-// Response: {"stage": "stored|pre_filter|synthesizer_skip|noise_filtered|no_synthesizer", "stored": 0|1, "entry": "..."}
+// Response: {"stage": "stored|pre_filter|length_filter|content_score_filter|synthesizer_skip|noise_filtered|no_synthesizer", "stored": 0|1, "entry": "..."}
 func (a *apiHandler) handleIngest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -171,13 +171,38 @@ func (a *apiHandler) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-filter (only when user prompt is provided).
+	pCfg := a.write.Config()
+
+	// --- Pre-Haiku gates (ordered cheapest → most expensive) ---
+
+	// 1. String-match pre-filter (ack + procedural prefix).
 	if req.UserPrompt != "" && rejection.QuickFilter(req.UserPrompt, req.AssistantResponse) {
 		a.rejLog.Add(rejection.StagePreFilter, req.UserPrompt, req.AssistantResponse)
 		writeJSON(w, 200, map[string]any{"stage": "pre_filter", "stored": 0})
 		return
 	}
 
+	// 2. Length gate — responses too short to contain durable knowledge.
+	if pCfg.IngestMinLen > 0 && len(strings.TrimSpace(req.AssistantResponse)) < pCfg.IngestMinLen {
+		a.rejLog.Add(rejection.StagePreFilter, req.UserPrompt, req.AssistantResponse)
+		writeJSON(w, 200, map[string]any{"stage": "length_filter", "stored": 0})
+		return
+	}
+
+	// 3. Content score pre-gate — embed raw text, score against noise prototypes.
+	//    This is the adaptive feedback loop: rejections train the scorer, and
+	//    the scorer blocks future similar noise before the expensive Haiku call.
+	//    Note: we do NOT add these rejections back to the rejection store — the
+	//    store should only learn from Haiku SKIP verdicts and pre-filter catches.
+	//    Adding scorer-filtered items back would create a positive feedback loop.
+	if pCfg.ContentScorePreGate > 0 {
+		if score, ok := a.write.PreScore(ctx, req.AssistantResponse); ok && score < pCfg.ContentScorePreGate {
+			writeJSON(w, 200, map[string]any{"stage": "content_score_filter", "stored": 0})
+			return
+		}
+	}
+
+	// --- Haiku LLM quality gate ---
 	entry, err := a.synth.SynthesizeQA(ctx, req.UserPrompt, req.AssistantResponse)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "synthesis error: " + err.Error()})

@@ -138,6 +138,27 @@ func (wp *WritePipeline) UpdateScorer(scorer *quality.ContentScorer) {
 	wp.scorer = scorer
 }
 
+// PreScore embeds the given text and returns its content quality score.
+// Returns (score, true) on success or (0, false) when the scorer is
+// unavailable or embedding fails. This is designed for pre-Haiku gating:
+// callers can skip the expensive LLM call when the raw text scores below
+// the noise threshold.
+func (wp *WritePipeline) PreScore(ctx context.Context, text string) (float64, bool) {
+	wp.mu.RLock()
+	scorer := wp.scorer
+	wp.mu.RUnlock()
+
+	if scorer == nil {
+		return 0, false
+	}
+
+	vec, err := wp.embedder.Embed(ctx, text)
+	if err != nil {
+		return 0, false
+	}
+	return scorer.Score(vec), true
+}
+
 // ProcessDirect embeds and stores pre-formatted text without chunking.
 // Use this for Q&A pairs and session summaries that are already well-structured.
 // Safe to call from a goroutine — errors are logged, not returned.

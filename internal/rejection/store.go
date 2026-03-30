@@ -63,12 +63,12 @@ type PrefixCount struct {
 // Store is a bounded ring buffer of rejected exchanges, backed by a JSONL file.
 // All methods are goroutine-safe. A nil *Store is a no-op.
 type Store struct {
-	mu        sync.Mutex
-	entries   []Entry
-	maxSize   int
-	path      string
+	mu                sync.Mutex
+	entries           []Entry
+	maxSize           int
+	path              string
 	addedSinceRebuild int
-	rebuildCh chan struct{}
+	rebuildCh         chan struct{}
 }
 
 // Open loads (or creates) the rejection store at path with the given capacity.
@@ -211,7 +211,10 @@ func (s *Store) Stats() Stats {
 	st.AvgUserLen = math.Round(sumUser/n*10) / 10
 	st.AvgAsstLen = math.Round(sumAsst/n*10) / 10
 
-	type kv struct{ k string; v int }
+	type kv struct {
+		k string
+		v int
+	}
 	kvs := make([]kv, 0, len(prefixFreq))
 	for k, v := range prefixFreq {
 		kvs = append(kvs, kv{k, v})
@@ -291,8 +294,16 @@ func persistJSONL(path string, entries []Entry) error {
 	w := bufio.NewWriter(f)
 	for _, e := range entries {
 		data, _ := json.Marshal(e)
-		w.Write(data)
-		w.WriteByte('\n')
+		if _, err := w.Write(data); err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
+		if err := w.WriteByte('\n'); err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()

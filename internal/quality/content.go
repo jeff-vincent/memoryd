@@ -3,6 +3,7 @@ package quality
 import (
 	"context"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/memory-daemon/memoryd/internal/embedding"
@@ -67,6 +68,11 @@ func NewContentScorerWithProtos(ctx context.Context, emb embedding.Embedder, qua
 // the actual assistant texts accumulated in the rejection store, rather than
 // the static defaults. When rejectionTexts is empty it falls back to defaults.
 // This is the primary path for adaptive noise learning.
+//
+// To avoid slow EmbedBatch calls and keep the noise signal focused, only the
+// most recent maxRejectionProtos texts are used.
+const maxRejectionProtos = 150
+
 func NewContentScorerFromRejections(ctx context.Context, emb embedding.Embedder, rejectionTexts, qualityProtos []string) (*ContentScorer, error) {
 	if len(qualityProtos) == 0 {
 		qualityProtos = DefaultQualityProtos
@@ -75,6 +81,10 @@ func NewContentScorerFromRejections(ctx context.Context, emb embedding.Embedder,
 	if len(noiseProtos) == 0 {
 		noiseProtos = DefaultNoiseProtos
 	}
+	// Cap to the most recent entries to keep embedding fast and noise focused.
+	if len(noiseProtos) > maxRejectionProtos {
+		noiseProtos = noiseProtos[len(noiseProtos)-maxRejectionProtos:]
+	}
 	return NewContentScorerWithProtos(ctx, emb, qualityProtos, noiseProtos)
 }
 
@@ -82,23 +92,42 @@ func NewContentScorerFromRejections(ctx context.Context, emb embedding.Embedder,
 // vector. A score near 1.0 means the chunk is semantically close to high-value
 // knowledge prototypes; near 0.0 means it resembles noise.
 //
-// Uses ratio normalization: score = avgQualitySim / (avgQualitySim + avgNoiseSim)
+// Uses ratio normalization: score = avgQualitySim / (avgQualitySim + topKNoiseSim)
 // so the result is always in (0, 1) and independent of absolute similarity magnitudes.
+//
+// The noise component uses the top-K most similar noise prototypes rather than
+// averaging all of them. This prevents dilution when the rejection store
+// accumulates hundreds of diverse noise examples — avgNoise would converge to
+// a constant, destroying discriminative power.
+const noiseTopK = 3
+
 func (cs *ContentScorer) Score(vec []float32) float64 {
 	if cs == nil || len(vec) == 0 {
 		return 0.5 // neutral default when scorer unavailable
 	}
 
-	var qualitySum, noiseSum float64
+	var qualitySum float64
 	for _, q := range cs.qualityVecs {
 		qualitySum += cosineSim(vec, q)
 	}
-	for _, n := range cs.noiseVecs {
-		noiseSum += cosineSim(vec, n)
-	}
-
 	avgQuality := qualitySum / float64(len(cs.qualityVecs))
-	avgNoise := noiseSum / float64(len(cs.noiseVecs))
+
+	// Top-K noise: use the K most similar noise prototypes.
+	noiseSims := make([]float64, len(cs.noiseVecs))
+	for i, n := range cs.noiseVecs {
+		noiseSims[i] = cosineSim(vec, n)
+	}
+	sort.Float64s(noiseSims)
+
+	k := noiseTopK
+	if k > len(noiseSims) {
+		k = len(noiseSims)
+	}
+	var topNoiseSum float64
+	for i := len(noiseSims) - k; i < len(noiseSims); i++ {
+		topNoiseSum += noiseSims[i]
+	}
+	avgNoise := topNoiseSum / float64(k)
 
 	denom := avgQuality + avgNoise
 	if denom <= 0 {

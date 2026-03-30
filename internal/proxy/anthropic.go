@@ -183,26 +183,28 @@ func (h *anthropicHandler) ingest(rawReq map[string]json.RawMessage, assistantTe
 	userMsg := extractLastUserMessage(rawReq)
 
 	if h.synth.Available() {
-		// Cheap pre-filter: skip obvious ack+status exchanges without an LLM call.
+		pCfg := h.write.Config()
+
+		// --- Pre-Haiku gates (ordered cheapest → most expensive) ---
+
+		// 1. String-match pre-filter (ack + procedural prefix).
 		if userMsg != "" && rejection.QuickFilter(userMsg, assistantText) {
 			h.rejLog.Add(rejection.StagePreFilter, userMsg, assistantText)
 			log.Printf("[proxy] pre-filter: skipped procedural exchange (user=%d asst=%d chars)", len(userMsg), len(assistantText))
+		} else if pCfg.IngestMinLen > 0 && len(strings.TrimSpace(assistantText)) < pCfg.IngestMinLen {
+			// 2. Length gate — too short for durable knowledge.
+			h.rejLog.Add(rejection.StagePreFilter, userMsg, assistantText)
+			log.Printf("[proxy] length-filter: skipped short response (%d chars < %d)", len(assistantText), pCfg.IngestMinLen)
+		} else if pCfg.ContentScorePreGate > 0 {
+			// 3. Content score pre-gate — embed raw text, score against noise prototypes.
+			//    Do NOT add to rejection store — scorer learns only from Haiku SKIP verdicts.
+			if score, ok := h.write.PreScore(ctx, assistantText); ok && score < pCfg.ContentScorePreGate {
+				log.Printf("[proxy] content-score-filter: skipped noise (score=%.2f < gate=%.2f)", score, pCfg.ContentScorePreGate)
+			} else {
+				h.synthesizeAndStore(ctx, userMsg, assistantText)
+			}
 		} else {
-			// All content goes through the LLM quality gate — no bypass.
-			go func() {
-				entry, err := h.synth.SynthesizeQA(ctx, userMsg, assistantText)
-				if err != nil {
-					log.Printf("[proxy] SynthesizeQA error: %v — skipping (quality gate)", err)
-					return
-				}
-				if entry == "" {
-					h.rejLog.Add(rejection.StageSynthesizer, userMsg, assistantText)
-					log.Printf("[proxy] SynthesizeQA: exchange skipped (no durable value)")
-					return
-				}
-				h.write.ProcessDirect(entry, "claude-code", nil)
-				log.Printf("[proxy] SynthesizeQA: stored entry (%d chars)", len(entry))
-			}()
+			h.synthesizeAndStore(ctx, userMsg, assistantText)
 		}
 	} else {
 		log.Printf("[proxy] synthesizer unavailable — skipping write (quality gate requires LLM)")
@@ -230,6 +232,24 @@ func (h *anthropicHandler) ingest(rawReq map[string]json.RawMessage, assistantTe
 			}()
 		}
 	}
+}
+
+// synthesizeAndStore runs the Haiku quality gate in a goroutine and stores the result.
+func (h *anthropicHandler) synthesizeAndStore(ctx context.Context, userMsg, assistantText string) {
+	go func() {
+		entry, err := h.synth.SynthesizeQA(ctx, userMsg, assistantText)
+		if err != nil {
+			log.Printf("[proxy] SynthesizeQA error: %v — skipping (quality gate)", err)
+			return
+		}
+		if entry == "" {
+			h.rejLog.Add(rejection.StageSynthesizer, userMsg, assistantText)
+			log.Printf("[proxy] SynthesizeQA: exchange skipped (no durable value)")
+			return
+		}
+		h.write.ProcessDirect(entry, "claude-code", nil)
+		log.Printf("[proxy] SynthesizeQA: stored entry (%d chars)", len(entry))
+	}()
 }
 
 // countPairs counts the number of complete user+assistant turn pairs.

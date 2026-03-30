@@ -27,6 +27,13 @@ type PipelineConfig struct {
 	NoiseMinLen        int     `yaml:"noise_min_len"         json:"noise_min_len"`
 	NoiseMinAlnumRatio float64 `yaml:"noise_min_alnum_ratio" json:"noise_min_alnum_ratio"`
 
+	// Pre-Haiku gates — applied to raw assistant text before the LLM call.
+	// IngestMinLen: assistant responses shorter than this skip Haiku entirely.
+	IngestMinLen int `yaml:"ingest_min_len" json:"ingest_min_len"`
+	// ContentScorePreGate: if > 0, embed the raw text and score it against
+	// noise prototypes. Responses scoring below this skip Haiku.
+	ContentScorePreGate float64 `yaml:"content_score_pre_gate" json:"content_score_pre_gate"`
+
 	// Content score gate — chunks scoring below this threshold are dropped
 	// before storage. Set to 0 to disable (default).
 	ContentScoreGate float64 `yaml:"content_score_gate" json:"content_score_gate"`
@@ -142,6 +149,8 @@ var Default = Config{
 	Pipeline: PipelineConfig{
 		NoiseMinLen:              40, // eval-tuned: 40 chars captures short-but-real agent responses without admitting trivial noise
 		NoiseMinAlnumRatio:       0.40,
+		IngestMinLen:             80,   // responses < 80 chars never contain durable knowledge (benchmark: 0% store rate < 100 chars)
+		ContentScorePreGate:      0.35, // pre-Haiku noise gate: below this the raw text is too noise-like to warrant an LLM call
 		ContentScoreGate:         0.0,
 		DedupThreshold:           0.92,
 		SourceExtensionThreshold: 0.75,
